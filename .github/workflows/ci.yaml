@@ -40,10 +40,32 @@ jobs:
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           script/cibuild
 
-      # release on pushes to main
-      - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+      - name: release-train
+        id: release-train
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: script/release
+          LOG_DEBUG_AS_NOTICE: 1
+        uses: WillAbides/release-train@v3.0.0-alpha.33
+        with:
+          create-release: true
+          validate-go-module: go.mod
+          release-refs: main
+          initial-release-tag: v0.0.0-0
+          v0: true
 
+  ci:
+    needs: cibuild
+    runs-on: ubuntu-22.04
+    steps:
+      - run: echo ok
 
+  release:
+    needs: ci
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: WillAbides/release-train@v3.0.0-alpha.33
+        with:
+          create-release: true
+          validate-go-module: go.mod
+          release-refs: main
+          initial-release-tag: v0.0.0-0
