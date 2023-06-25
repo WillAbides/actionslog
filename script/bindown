@@ -1,0 +1,14 @@
+#!/bin/sh
+#/ script/bindown runs bindown with the given arguments
+
+set -e
+
+CDPATH="" cd -- "$(dirname -- "$0")/.."
+
+mkdir -p bin
+
+[ -f bin/bindown ] || sh -c "$(
+  curl -sfL https://github.com/WillAbides/bindown/releases/download/v3.20.2/bootstrap-bindown.sh
+)"
+
+exec bin/bindown "$@"

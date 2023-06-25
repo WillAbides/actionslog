@@ -1,0 +1,58 @@
+#!/bin/sh
+#/ script/update-repo-settings updates the settings for the GitHub repository to the preferred settings.
+#/ This is only needed once per repository, so it deletes itself after running (actually it pushes
+#/ the change before updating the repository because the update disallows pushing changes to main).
+#/
+#/ This would normally be part of the one-time apply-template script, but it cannot be run
+#/ from GitHub Actions.
+#/
+#/ Settings changed:
+#/ - Projects: disabled
+#/ - Wiki: disabled
+#/ - Rebase merge: disabled
+#/ - Squash merge: disabled
+#/ - Always suggest updating pull request branches: enabled
+#/ - Automatically delete head branches: enabled
+#/ - Allow auto-merge: enabled
+#/ - Branch protection for "main":
+#/   - Require a pull request before merging : enabled
+#/   - Required status checks: "cibuild"
+
+set -e
+
+CDPATH="" cd -- "$(dirname -- "$0")/.."
+
+mkdir -p tmp/update-repo-settings
+git worktree add -q tmp/update-repo-settings
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+trap 'git worktree remove -f tmp/update-repo-settings' EXIT
+(
+  cd tmp/update-repo-settings
+  rm script/update-repo-settings
+  script/generate
+  git add .
+  git commit -q -m "rm script/update-repo-settings"
+  git push -q origin "$(git rev-parse --abbrev-ref HEAD):$BRANCH"
+)
+
+script/bindown -q install gh
+
+bin/gh repo edit \
+  --enable-projects=false \
+  --enable-wiki=false \
+  --enable-rebase-merge=false \
+  --enable-squash-merge=false \
+  --allow-update-branch=true \
+  --enable-auto-merge=true \
+  --delete-branch-on-merge=true
+
+bin/gh api '/repos/{owner}/{repo}/branches/main/protection' \
+  --silent \
+  -X PUT \
+  -F 'enforce_admins=false' \
+  -F 'restrictions=null' \
+  -F 'required_status_checks[strict]=true' \
+  -F 'required_status_checks[contexts][]=cibuild' \
+  -F 'required_pull_request_reviews[required_approving_review_count]=0'
+
+git merge
