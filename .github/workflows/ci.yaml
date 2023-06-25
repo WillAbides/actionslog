@@ -12,6 +12,7 @@ on:
 jobs:
   cibuild:
     strategy:
+      fail-fast: false
       matrix:
         go:
           - 1.20.x
