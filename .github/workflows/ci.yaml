@@ -9,35 +9,72 @@ on:
       - synchronize
       - opened
       - reopened
+      - labeled
+      - unlabeled
 jobs:
-  cibuild:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        go:
+          - 1.20.x
+          - 1.21rc2
     name: cibuild
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
       - uses: WillAbides/setup-go-faster@v1
         id: setup-go
         with:
-          go-version: '1.21rc2'
+          go-version: ${{ matrix.go }}
       - uses: actions/cache@v3
         with:
           path: |
             ${{ steps.setup-go.outputs.GOCACHE }}
             ${{ steps.setup-go.outputs.GOMODCACHE }}
-          key: ${{ runner.os }}-go-${{ hashFiles('go.*', '.github/workflows/ci.yaml', 'script/*', '.bindown.yaml', '.goreleaser.yaml') }}
-          restore-keys: ${{ runner.os }}-go-
-      - name: script/cibuild
+          key: ${{ runner.os }}-test-${{ matrix.go }}-${{ hashFiles('go.*', '.github/workflows/ci.yaml', 'script/*', '.bindown.yaml', '.goreleaser.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-test-${{ matrix.go }}-
+            ${{ runner.os }}-test-
+      - run: script/test
+
+  lint:
+    name: lint
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+      - uses: WillAbides/setup-go-faster@v1
+        id: setup-go
+        with:
+          go-version: 1.20.x
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ${{ steps.setup-go.outputs.GOCACHE }}
+            ${{ steps.setup-go.outputs.GOMODCACHE }}
+          key: ${{ runner.os }}-lint-${{ hashFiles('go.*', '.github/workflows/ci.yaml', 'script/*', '.bindown.yaml', '.goreleaser.yaml') }}
+          restore-keys: ${{ runner.os }}-lint-
+      - name: configure git
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          script/cibuild
+      - run: script/lint
+      - run: script/generate --check
 
-      # release on pushes to main
-      - if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: script/release
-
-
+  release:
+    needs:
+     - test
+     - lint
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - uses: WillAbides/release-train@v3.0.0-alpha.34
+        with:
+          create-release: true
+          validate-go-module: go.mod
+          release-refs: main
+          initial-release-tag: v0.0.0-0

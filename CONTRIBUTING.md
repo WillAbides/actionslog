@@ -28,10 +28,6 @@ script/generate runs all generators for this repo.
 
 script/lint runs linters on the project.
 
-### release
-
-script/release creates a new release. It is run by GitHub Actions on push to main.
-
 ### test
 
 script/test runs tests on the project.
