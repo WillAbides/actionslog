@@ -7,10 +7,6 @@ actionslog uses a number of scripts to automate common tasks. They are found in 
 
 <!--- start script descriptions --->
 
-### actionslog
-
-script/actionslog builds and runs the project with the given arguments.
-
 ### bindown
 
 script/bindown runs bindown with the given arguments
