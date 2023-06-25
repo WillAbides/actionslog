@@ -46,27 +46,6 @@ script/generate-readme updates documentation.
 - For projects with binaries, it updates the usage output in README.md.
 - Adds script descriptions to CONTRIBUTING.md.
 
-### update-repo-settings
-
-script/update-repo-settings updates the settings for the GitHub repository to the preferred settings.
-This is only needed once per repository, so it deletes itself after running (actually it pushes
-the change before updating the repository because the update disallows pushing changes to main).
-
-This would normally be part of the one-time apply-template script, but it cannot be run
-from GitHub Actions.
-
-Settings changed:
-- Projects: disabled
-- Wiki: disabled
-- Rebase merge: disabled
-- Squash merge: disabled
-- Always suggest updating pull request branches: enabled
-- Automatically delete head branches: enabled
-- Allow auto-merge: enabled
-- Branch protection for "main":
-  - Require a pull request before merging : enabled
-  - Required status checks: "cibuild"
-
 <!--- end script descriptions --->
 
 ## Releasing
