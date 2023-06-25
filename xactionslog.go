@@ -7,12 +7,13 @@ package actionslog
 import (
 	"bytes"
 	"context"
-	"golang.org/x/exp/slog"
 	"io"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+
+	"golang.org/x/exp/slog"
 )
 
 // Log is a log level in GitHub Actions.

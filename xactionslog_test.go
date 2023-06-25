@@ -7,11 +7,12 @@ package actionslog
 import (
 	"bytes"
 	"fmt"
-	"golang.org/x/exp/slog"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
+
+	"golang.org/x/exp/slog"
 )
 
 func TestHandler(t *testing.T) {

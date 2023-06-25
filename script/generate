@@ -42,6 +42,7 @@ for file in actionslog.go actionslog_test.go; do
   echo "$content" > "$x_file"
 done
 
+script/fmt
 go generate ./...
 go mod tidy
 
