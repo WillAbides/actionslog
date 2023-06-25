@@ -32,8 +32,10 @@ jobs:
           path: |
             ${{ steps.setup-go.outputs.GOCACHE }}
             ${{ steps.setup-go.outputs.GOMODCACHE }}
-          key: ${{ runner.os }}-test-${{ hashFiles('go.*', '.github/workflows/ci.yaml', 'script/*', '.bindown.yaml', '.goreleaser.yaml') }}
-          restore-keys: ${{ runner.os }}-test-
+          key: ${{ runner.os }}-test-${{ matrix.go }}-${{ hashFiles('go.*', '.github/workflows/ci.yaml', 'script/*', '.bindown.yaml', '.goreleaser.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-test-${{ matrix.go }}-
+            ${{ runner.os }}-test-
       - run: script/test
 
   lint:
