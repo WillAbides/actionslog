@@ -5,10 +5,7 @@ set -e
 
 CDPATH="" cd -- "$(dirname -- "$0")/.."
 
-script/bindown -q install shellcheck
-
-# install golangci-lint from source to avoid conflicts with go versions while 1.21 is still a rc
-GOBIN="$(pwd)"/bin go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.53.3
+script/bindown -q install shellcheck golangci-lint
 
 bin/golangci-lint run ./...
 bin/shellcheck script/*
