@@ -1,17 +1,15 @@
-# Contributing to goproject-tmpl
+# Contributing to actionslog
 
 ## Scripts
 
-goproject-tmpl uses a number of scripts to automate common tasks. They are found in the
+actionslog uses a number of scripts to automate common tasks. They are found in the
 `script` directory.
 
 <!--- start script descriptions --->
 
-### apply-template
+### actionslog
 
-script/apply-template updates the files in this repo based on the repository name.
-This should only be run once, and it should be run by the apply-template GitHub Workflow.
-It will be deleted after running.
+script/actionslog builds and runs the project with the given arguments.
 
 ### bindown
 
@@ -30,17 +28,9 @@ script/fmt formats go code and shell scripts.
 script/generate runs all generators for this repo.
 `script/generate --check` checks that the generated files are up to date.
 
-### goproject-tmpl
-
-script/goproject-tmpl builds and runs the project with the given arguments.
-
 ### lint
 
 script/lint runs linters on the project.
-
-### new-from-template
-
-script/new-from-template is for ad-hoc testing of this template.
 
 ### release
 

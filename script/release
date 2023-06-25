@@ -28,7 +28,7 @@ script/bindown -q install jq
 git fetch --tags
 
 GITHUB_SHA="${GITHUB_SHA:-"$(git rev-parse HEAD)"}"
-GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-"WillAbides/goproject-tmpl"}"
+GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-"WillAbides/actionslog"}"
 
 PREV_REF="$(bin/semver-prev --prefix v --fallback "" --ref "$GITHUB_SHA")"
 PREV_VERSION="$PREV_REF"

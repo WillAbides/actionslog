@@ -7,7 +7,7 @@ builds:
       - CGO_ENABLED=0
     ldflags:
       - -s -w -X main.version={{.Version}}
-    main: ./cmd/goproject-tmpl
+    main: ./cmd/actionslog
 checksum:
   name_template: 'checksums.txt'
 snapshot:

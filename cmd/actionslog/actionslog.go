@@ -16,7 +16,7 @@ type cmdRoot struct {
 
 var kongVars = kong.Vars{
 	"version":     version,
-	"VersionHelp": `Output the goproject-tmpl version and exit.`,
+	"VersionHelp": `Output the actionslog version and exit.`,
 }
 
 func main() {

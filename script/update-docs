@@ -21,10 +21,10 @@ $end_comment"
   echo "${data//$pattern/$replacement}" >"$file"
 }
 
-if [ -f script/goproject-tmpl ]; then
+if [ -f script/actionslog ]; then
   USAGE_OUTPUT="
 \`\`\`
-$(COLUMNS=100 script/goproject-tmpl --help)
+$(COLUMNS=100 script/actionslog --help)
 \`\`\`
 "
 fi
