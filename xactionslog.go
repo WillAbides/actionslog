@@ -167,8 +167,7 @@ func (h *Handler) Handle(ctx context.Context, record slog.Record) error {
 	if line[len(line)-1] != ' ' && record.Message != "" && handlerOut != "" {
 		line += " "
 	}
-	line += handlerOut
-	line += newlineStr
+	line += handlerOut + "\n"
 	_, err = io.WriteString(h.w, line)
 	if err != nil {
 		return err
@@ -181,9 +180,9 @@ func escapeString(val string) string {
 	var line string
 	for _, r := range val {
 		switch r {
-		case newline:
+		case '\n':
 			line += "%0A"
-		case carriageReturn:
+		case '\r':
 			line += "%0D"
 		case '%':
 			line += "%25"
