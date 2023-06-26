@@ -2,23 +2,47 @@
 
 //go:build !go1.21
 
-package actionslog
+package actionslog_test
 
 import (
 	"bytes"
 	"fmt"
+	"golang.org/x/exp/slog"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
 	"testing"
 
-	"golang.org/x/exp/slog"
+	"github.com/willabides/actionslog"
 )
+
+func Example() {
+	logger := slog.New(actionslog.New(os.Stdout, &actionslog.Options{
+		Level: slog.LevelDebug,
+	}))
+	logger = logger.With(slog.String("func", "Example"))
+
+	logger.Info("hello", slog.String("object", "world"))
+	logger.Warn("This is a stern warning")
+	logger.Error("got an error", slog.Any("err", fmt.Errorf("omg")))
+	logger.Debug("this is a debug message")
+	logger.Info("this is a \n multiline \n message")
+	logger.Info("multiline value", slog.String("value", "this is a\nmultiline\nvalue"))
+	// Output:
+	//
+	// ::notice ::hello func=Example object=world
+	// ::warning ::This is a stern warning func=Example
+	// ::error ::got an error func=Example err=omg
+	// ::debug ::this is a debug message func=Example
+	// ::notice ::this is a %0A multiline %0A message func=Example
+	// ::notice ::multiline value func=Example value="this is a\nmultiline\nvalue"
+}
 
 func TestHandler(t *testing.T) {
 	t.Run("concurrency", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := slog.New(New(&buf, nil))
+		logger := slog.New(actionslog.New(&buf, nil))
 		sub := logger.With(slog.String("sub", "sub"))
 		var wg sync.WaitGroup
 		for i := 0; i < 100; i++ {
@@ -38,7 +62,7 @@ func TestHandler(t *testing.T) {
 
 	t.Run("AddSource", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := slog.New(New(&buf, &Options{
+		logger := slog.New(actionslog.New(&buf, &actionslog.Options{
 			AddSource: true,
 		}))
 		_, wantFile, wantLine, _ := runtime.Caller(0)
@@ -50,7 +74,7 @@ func TestHandler(t *testing.T) {
 
 	t.Run("WithGroup", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := slog.New(New(&buf, nil))
+		logger := slog.New(actionslog.New(&buf, nil))
 		logger = logger.With(slog.String("a", "b"))
 		logger = logger.WithGroup("group1")
 		logger.Info("hello")
@@ -59,11 +83,11 @@ func TestHandler(t *testing.T) {
 
 	t.Run("Debug to notice", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := slog.New(New(&buf, &Options{
-			LevelLog: func(level slog.Level) Log {
-				l := DefaultLevelLog(level)
-				if l == LogDebug {
-					return LogNotice
+		logger := slog.New(actionslog.New(&buf, &actionslog.Options{
+			LevelLog: func(level slog.Level) actionslog.Log {
+				l := actionslog.DefaultLevelLog(level)
+				if l == actionslog.LogDebug {
+					return actionslog.LogNotice
 				}
 				return l
 			},
@@ -75,14 +99,14 @@ func TestHandler(t *testing.T) {
 
 	t.Run("escapes message", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := slog.New(New(&buf, nil))
+		logger := slog.New(actionslog.New(&buf, nil))
 		logger.Info("percentages\r\n50% 75% 100%")
 		requireEqualString(t, "::notice ::percentages%0D%0A50%25 75%25 100%25\n", buf.String())
 	})
 
 	t.Run("debug", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := slog.New(New(&buf, &Options{
+		logger := slog.New(actionslog.New(&buf, &actionslog.Options{
 			Level: slog.LevelDebug,
 		}))
 		logger.Debug("debug")
@@ -99,7 +123,7 @@ func TestHandler(t *testing.T) {
 
 	t.Run("info", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := slog.New(New(&buf, &Options{
+		logger := slog.New(actionslog.New(&buf, &actionslog.Options{
 			Level: slog.LevelInfo,
 		}))
 		logger.Debug("debug")
@@ -114,7 +138,7 @@ func TestHandler(t *testing.T) {
 
 	t.Run("warn", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := slog.New(New(&buf, &Options{
+		logger := slog.New(actionslog.New(&buf, &actionslog.Options{
 			Level: slog.LevelWarn,
 		}))
 		logger.Debug("debug")
@@ -128,7 +152,7 @@ func TestHandler(t *testing.T) {
 
 	t.Run("error", func(t *testing.T) {
 		var buf bytes.Buffer
-		logger := slog.New(New(&buf, &Options{
+		logger := slog.New(actionslog.New(&buf, &actionslog.Options{
 			Level: slog.LevelError,
 		}))
 		logger.Debug("debug")
