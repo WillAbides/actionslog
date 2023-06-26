@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Log is a log level in GitHub Actions.
@@ -59,41 +61,14 @@ type Options struct {
 	// The handler calls Level.Level for each record processed;
 	// to adjust the minimum level dynamically, use a LevelVar.
 	Level slog.Leveler
-
-	// ReplaceAttr is called to rewrite each non-group attribute before it is logged.
-	// The attribute's value has been resolved (see [Value.Resolve]).
-	// If ReplaceAttr returns an Attr with Key == "", the attribute is discarded.
-	//
-	// The built-in attributes with keys "time", "level", "source", and "msg"
-	// are passed to this function, except that time is omitted
-	// if zero, and source is omitted if AddSource is false.
-	//
-	// The first argument is a list of currently open groups that contain the
-	// Attr. It must not be retained or modified. ReplaceAttr is never called
-	// for Group attributes, only their contents. For example, the attribute
-	// list
-	//
-	//     Int("a", 1), Group("g", Int("b", 2)), Int("c", 3)
-	//
-	// results in consecutive calls to ReplaceAttr with the following arguments:
-	//
-	//     nil, Int("a", 1)
-	//     []string{"g"}, Int("b", 2)
-	//     nil, Int("c", 3)
-	//
-	// ReplaceAttr can be used to change the default keys of the built-in
-	// attributes, convert types (for example, to replace a `time.Time` with the
-	// integer seconds since the Unix epoch), sanitize personal information, or
-	// remove attributes from the output.
-	ReplaceAttr func(groups []string, a slog.Attr) slog.Attr
 }
 
 type Handler struct {
-	opts       Options
-	mux        *sync.Mutex
-	w          io.Writer
-	handler    slog.Handler
-	handlerBuf *bytes.Buffer
+	attrs        []slog.Attr
+	groupIndices []int
+	opts         Options
+	mux          *sync.Mutex
+	w            io.Writer
 }
 
 var _ slog.Handler = &Handler{}
@@ -102,35 +77,26 @@ func New(w io.Writer, opts *Options) *Handler {
 	if opts == nil {
 		opts = new(Options)
 	}
-	replace := func(groups []string, attr slog.Attr) slog.Attr {
-		if opts.ReplaceAttr != nil {
-			attr = opts.ReplaceAttr(groups, attr)
-		}
-		if attr.Key == "time" || attr.Key == "level" || attr.Key == "msg" {
-			return slog.Attr{}
-		}
-		return attr
-	}
-	var handlerBuf bytes.Buffer
-	handler := slog.NewTextHandler(&handlerBuf, &slog.HandlerOptions{
-		Level:       opts.Level,
-		ReplaceAttr: replace,
-	})
 	var mux sync.Mutex
 	return &Handler{
-		opts:       *opts,
-		mux:        &mux,
-		w:          w,
-		handler:    handler,
-		handlerBuf: &handlerBuf,
+		opts: *opts,
+		mux:  &mux,
+		w:    w,
 	}
 }
 
-func (h *Handler) Enabled(ctx context.Context, level slog.Level) bool {
-	return h.handler.Enabled(ctx, level)
+func (h *Handler) Enabled(_ context.Context, level slog.Level) bool {
+	l := slog.LevelInfo
+	if h.opts.Level != nil {
+		l = h.opts.Level.Level()
+	}
+	return level >= l
 }
 
 func (h *Handler) Handle(ctx context.Context, record slog.Record) error {
+	if !h.Enabled(ctx, record.Level) {
+		return nil
+	}
 	levelLog := h.opts.LevelLog
 	if levelLog == nil {
 		levelLog = DefaultLevelLog
@@ -153,19 +119,27 @@ func (h *Handler) Handle(ctx context.Context, record slog.Record) error {
 	}
 	line += "::"
 	line += escapeString(record.Message)
+
+	attrs := h.attrs
+	record.Attrs(func(attr slog.Attr) bool {
+		attrs = appendAttr(attrs, attr)
+		return true
+	})
+	if len(attrs) > 0 {
+		b, err := yaml.Marshal(attrsMarshaler{attrs: attrs})
+		if err != nil {
+			return err
+		}
+		b = bytes.TrimSpace(b)
+		line += escapeString("\n" + string(b))
+	}
+	if !strings.HasSuffix(line, "\n") {
+		line += "\n"
+	}
+
 	h.mux.Lock()
 	defer h.mux.Unlock()
-	h.handlerBuf.Reset()
-	err := h.handler.Handle(ctx, record)
-	if err != nil {
-		return err
-	}
-	handlerOut := escapeString(strings.TrimSpace(h.handlerBuf.String()))
-	if line[len(line)-1] != ' ' && record.Message != "" && handlerOut != "" {
-		line += " "
-	}
-	line += handlerOut + "\n"
-	_, err = io.WriteString(h.w, line)
+	_, err := io.WriteString(h.w, line)
 	if err != nil {
 		return err
 	}
@@ -191,21 +165,53 @@ func escapeString(val string) string {
 }
 
 func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &Handler{
-		opts:       h.opts,
-		w:          h.w,
-		mux:        h.mux,
-		handler:    h.handler.WithAttrs(attrs),
-		handlerBuf: h.handlerBuf,
+	h2 := Handler{
+		attrs:        h.attrs,
+		groupIndices: h.groupIndices,
+		opts:         h.opts,
+		w:            h.w,
+		mux:          h.mux,
 	}
+	for _, attr := range attrs {
+		h2.attrs, _ = appendNestedAttr(h.groupIndices, h2.attrs, attr)
+	}
+	return &h2
 }
 
 func (h *Handler) WithGroup(name string) slog.Handler {
-	return &Handler{
-		opts:       h.opts,
-		w:          h.w,
-		mux:        h.mux,
-		handler:    h.handler.WithGroup(name),
-		handlerBuf: h.handlerBuf,
+	h2 := Handler{
+		attrs:        h.attrs,
+		groupIndices: h.groupIndices,
+		opts:         h.opts,
+		w:            h.w,
+		mux:          h.mux,
 	}
+	var idx int
+	h2.attrs, idx = appendNestedAttr(h2.groupIndices, h2.attrs, slog.Group(name))
+	h2.groupIndices = append(h2.groupIndices, idx)
+	return &h2
+}
+
+func appendNestedAttr(groupIdx []int, attrs []slog.Attr, val slog.Attr) ([]slog.Attr, int) {
+	if len(groupIdx) == 0 {
+		attrs = appendAttr(attrs, val)
+		return attrs, len(attrs) - 1
+	}
+	idx := groupIdx[0]
+	groupAttrs := attrs[idx].Value.Group()
+	groupAttrs, idx = appendNestedAttr(groupIdx[1:], groupAttrs, val)
+	attrs[idx].Value = slog.GroupValue(groupAttrs...)
+	return attrs, idx
+}
+
+func appendAttr(attrs []slog.Attr, a slog.Attr) []slog.Attr {
+	a.Value = a.Value.Resolve()
+	// inline groups with empty keys
+	if a.Value.Kind() == slog.KindGroup && a.Key == "" {
+		for _, attr := range a.Value.Group() {
+			attrs = appendAttr(attrs, attr)
+		}
+		return attrs
+	}
+	return append(attrs, a)
 }
