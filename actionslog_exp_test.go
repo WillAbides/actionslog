@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"fmt"
 	"golang.org/x/exp/slog"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -34,16 +35,6 @@ func Example() {
 	// ::error ::got an error func=Example err=omg
 	// ::debug ::this is a debug message func=Example
 	// ::notice ::this is a %0A multiline %0A message func=Example
-}
-
-// This is here so that we can output logs when running in CI to demonstrate how it looks GitHub.
-func TestExample(t *testing.T) {
-	t.Run("AddSource", func(t *testing.T) {
-		logger := slog.New(actionslog.New(os.Stdout, &actionslog.Options{
-			AddSource: true,
-		}))
-		logger.Info("hello")
-	})
 }
 
 func TestHandler(t *testing.T) {

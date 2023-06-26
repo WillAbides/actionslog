@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -13,6 +14,26 @@ import (
 
 	"github.com/willabides/actionslog"
 )
+
+func Example() {
+	logger := slog.New(actionslog.New(os.Stdout, &actionslog.Options{
+		Level: slog.LevelDebug,
+	}))
+	logger = logger.With(slog.String("func", "Example"))
+
+	logger.Info("hello", slog.String("object", "world"))
+	logger.Warn("This is a stern warning")
+	logger.Error("got an error", slog.Any("err", fmt.Errorf("omg")))
+	logger.Debug("this is a debug message")
+	logger.Info("this is a \n multiline \n message")
+	// Output:
+	//
+	// ::notice ::hello func=Example object=world
+	// ::warning ::This is a stern warning func=Example
+	// ::error ::got an error func=Example err=omg
+	// ::debug ::this is a debug message func=Example
+	// ::notice ::this is a %0A multiline %0A message func=Example
+}
 
 func TestHandler(t *testing.T) {
 	t.Run("concurrency", func(t *testing.T) {
