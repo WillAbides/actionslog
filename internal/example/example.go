@@ -30,4 +30,7 @@ func main() {
 	logger.Info("this is a\nmultiline\nmessage")
 
 	logger.Info("goodbye", slog.String("multiline value", "this is a\nmultiline\nvalue"))
+
+	noSourceLogger := slog.New(actionslog.New(os.Stdout, nil))
+	noSourceLogger.Info("this log line has no source")
 }
