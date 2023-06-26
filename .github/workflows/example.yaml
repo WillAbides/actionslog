@@ -14,11 +14,11 @@ jobs:
         id: setup-go
         with:
           go-version: 1.21rc2
-      - uses: actions/cache@v3
-        with:
-          path: |
-            ${{ steps.setup-go.outputs.GOCACHE }}
-            ${{ steps.setup-go.outputs.GOMODCACHE }}
-          key: ${{ runner.os }}-example-${{ hashFiles('go.*', '.github/workflows/ci.yaml', 'script/*', '.bindown.yaml', '.goreleaser.yaml') }}
-          restore-keys: ${{ runner.os }}-example-
+#      - uses: actions/cache@v3
+#        with:
+#          path: |
+#            ${{ steps.setup-go.outputs.GOCACHE }}
+#            ${{ steps.setup-go.outputs.GOMODCACHE }}
+#          key: ${{ runner.os }}-example-${{ hashFiles('go.*', '.github/workflows/ci.yaml', 'script/*', '.bindown.yaml', '.goreleaser.yaml') }}
+#          restore-keys: ${{ runner.os }}-example-
       - run: go run ./internal/example
