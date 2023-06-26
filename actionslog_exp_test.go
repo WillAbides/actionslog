@@ -28,6 +28,7 @@ func Example() {
 	logger.Error("got an error", slog.Any("err", fmt.Errorf("omg")))
 	logger.Debug("this is a debug message")
 	logger.Info("this is a \n multiline \n message")
+	logger.Info("multiline value", slog.String("value", "this is a\nmultiline\nvalue"))
 	// Output:
 	//
 	// ::notice ::hello func=Example object=world
@@ -35,6 +36,7 @@ func Example() {
 	// ::error ::got an error func=Example err=omg
 	// ::debug ::this is a debug message func=Example
 	// ::notice ::this is a %0A multiline %0A message func=Example
+	// ::notice ::multiline value func=Example value="this is a\nmultiline\nvalue"
 }
 
 func TestHandler(t *testing.T) {

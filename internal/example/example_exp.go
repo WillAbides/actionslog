@@ -29,7 +29,8 @@ func main() {
 
 	logger.Debug("this is a debug message")
 
-	logger.Info("this is a\nmultiline\nmessage")
+	logger.Info("this is a\nmultiline\nmessage", slog.String("val", "this is a\nmultiline\nvalue"))
 
-	logger.Info("goodbye", slog.String("multiline value", "this is a\nmultiline\nvalue"))
+	noSourceLogger := slog.New(actionslog.New(os.Stdout, nil))
+	noSourceLogger.Info("this log line has no source")
 }
