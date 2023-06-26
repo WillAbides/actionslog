@@ -29,12 +29,12 @@ func Example() {
 	logger.Info("multiline value", slog.String("value", "this is a\nmultiline\nvalue"))
 	// Output:
 	//
-	// ::notice ::hello func=Example object=world
-	// ::warning ::This is a stern warning func=Example
-	// ::error ::got an error func=Example err=omg
-	// ::debug ::this is a debug message func=Example
-	// ::notice ::this is a %0A multiline %0A message func=Example
-	// ::notice ::multiline value func=Example value="this is a\nmultiline\nvalue"
+	// ::notice ::hello%0Afunc: Example%0Aobject: world
+	// ::warning ::This is a stern warning%0Afunc: Example
+	// ::error ::got an error%0Afunc: Example%0Aerr: omg
+	// ::debug ::this is a debug message%0Afunc: Example
+	// ::notice ::this is a %0A multiline %0A message%0Afunc: Example
+	// ::notice ::multiline value%0Afunc: Example%0Avalue: |-%0A    this is a%0A    multiline%0A    value
 }
 
 func TestHandler(t *testing.T) {
@@ -53,8 +53,8 @@ func TestHandler(t *testing.T) {
 		}
 		wg.Wait()
 		for i := 0; i < 100; i++ {
-			requireStringContains(t, fmt.Sprintf("::notice ::hello i=%d\n", i), buf.String())
-			requireStringContains(t, fmt.Sprintf("::notice ::hello sub=sub i=%d\n", i), buf.String())
+			requireStringContains(t, fmt.Sprintf("::notice ::hello%si: %d\n", "%0A", i), buf.String())
+			requireStringContains(t, fmt.Sprintf("::notice ::hello%ssub: sub%si: %d\n", "%0A", "%0A", i), buf.String())
 		}
 	})
 
@@ -73,10 +73,10 @@ func TestHandler(t *testing.T) {
 	t.Run("WithGroup", func(t *testing.T) {
 		var buf bytes.Buffer
 		logger := slog.New(actionslog.New(&buf, nil))
-		logger = logger.With(slog.String("a", "b"))
 		logger = logger.WithGroup("group1")
+		logger = logger.With(slog.String("a", "b"))
 		logger.Info("hello")
-		requireEqualString(t, "::notice ::hello a=b\n", buf.String())
+		requireEqualString(t, "::notice ::hello%0Agroup1:%0A    a: b\n", buf.String())
 	})
 
 	t.Run("Debug to notice", func(t *testing.T) {
@@ -177,5 +177,12 @@ func requireStringContains(t *testing.T, want, got string) {
 		t.Fatalf(`String does not contain:
 want: %s
 got:  %s`, want, got)
+	}
+}
+
+func requireNoErr(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
 	}
 }

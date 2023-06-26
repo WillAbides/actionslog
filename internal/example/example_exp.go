@@ -23,13 +23,15 @@ func main() {
 
 	logger.Info("hello", slog.String("object", "world"))
 
-	logger.Warn("This is a stern warning")
+	logger.Warn(`This is a stern warning.
+Please stop doing whatever you're doing`, slog.Any("activities", []string{
+		"doing bad stuff",
+		"getting caught",
+	}))
 
 	logger.Error("got an error", slog.Any("err", fmt.Errorf("omg")))
 
 	logger.Debug("this is a debug message")
-
-	logger.Info("this is a\nmultiline\nmessage", slog.String("val", "this is a\nmultiline\nvalue"))
 
 	noSourceLogger := slog.New(actionslog.New(os.Stdout, nil))
 	noSourceLogger.Info("this log line has no source")
