@@ -34,3 +34,5 @@ Please stop doing whatever you're doing`, slog.Any("activities", []string{
 	noSourceLogger := slog.New(actionslog.New(os.Stdout, nil))
 	noSourceLogger.Info("this log line has no source")
 }
+
+
