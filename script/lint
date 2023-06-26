@@ -5,7 +5,27 @@ set -e
 
 CDPATH="" cd -- "$(dirname -- "$0")/.."
 
+# example input: "bin/golangci-lint: go1.20.5" outputs "20"
+extract_go1_major_version() {
+  sed 's/.*go1\.\([0-9]*\).*/\1/'
+}
+
 script/bindown -q install shellcheck golangci-lint
 
-bin/golangci-lint run ./...
+GOLANGCI_LINT_PATH="$(pwd)/bin/golangci-lint"
+
+GO_MAJOR_VERSION="$(go version | extract_go1_major_version)"
+LINT_BUILD_VERSION="$(go version "$GOLANGCI_LINT_PATH" | extract_go1_major_version)"
+
+# build from source when go version is ahead of the version used to build golanci-lint
+if [ "$GO_MAJOR_VERSION" -gt "$LINT_BUILD_VERSION" ]; then
+  script/bindown -q install jq
+  LINT_VERSION="$(
+    script/bindown dependency show-config golangci-lint --json | bin/jq -r '.vars.version'
+  )"
+  GOBIN="$(pwd)"/bin/_lint go install "github.com/golangci/golangci-lint/cmd/golangci-lint@v$LINT_VERSION"
+  GOLANGCI_LINT_PATH="$(pwd)/bin/_lint/golangci-lint"
+fi
+
+"$GOLANGCI_LINT_PATH" run ./...
 bin/shellcheck script/*

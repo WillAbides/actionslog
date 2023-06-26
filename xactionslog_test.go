@@ -31,8 +31,8 @@ func TestHandler(t *testing.T) {
 		}
 		wg.Wait()
 		for i := 0; i < 100; i++ {
-			requireStringContains(t, fmt.Sprintf("::notice ::hello i=%d"+newlineStr, i), buf.String())
-			requireStringContains(t, fmt.Sprintf("::notice ::hello sub=sub i=%d"+newlineStr, i), buf.String())
+			requireStringContains(t, fmt.Sprintf("::notice ::hello i=%d\n", i), buf.String())
+			requireStringContains(t, fmt.Sprintf("::notice ::hello sub=sub i=%d\n", i), buf.String())
 		}
 	})
 
@@ -44,8 +44,8 @@ func TestHandler(t *testing.T) {
 		_, wantFile, wantLine, _ := runtime.Caller(0)
 		logger.Info("hello")
 		wantLine++
-		want := fmt.Sprintf("::notice file=%s,line=%d::hello", wantFile, wantLine)
-		requireEqualLine(t, want, buf.String())
+		want := fmt.Sprintf("::notice file=%s,line=%d::hello\n", wantFile, wantLine)
+		requireEqualString(t, want, buf.String())
 	})
 
 	t.Run("WithGroup", func(t *testing.T) {
@@ -54,7 +54,7 @@ func TestHandler(t *testing.T) {
 		logger = logger.With(slog.String("a", "b"))
 		logger = logger.WithGroup("group1")
 		logger.Info("hello")
-		requireEqualLine(t, "::notice ::hello a=b", buf.String())
+		requireEqualString(t, "::notice ::hello a=b\n", buf.String())
 	})
 
 	t.Run("Debug to notice", func(t *testing.T) {
@@ -70,14 +70,14 @@ func TestHandler(t *testing.T) {
 			Level: slog.LevelDebug,
 		}))
 		logger.Debug("hello")
-		requireEqualLine(t, "::notice ::hello", buf.String())
+		requireEqualString(t, "::notice ::hello\n", buf.String())
 	})
 
 	t.Run("escapes message", func(t *testing.T) {
 		var buf bytes.Buffer
 		logger := slog.New(New(&buf, nil))
-		logger.Info("percentages" + carriageReturnStr + newlineStr + "50% 75% 100%")
-		requireEqualLine(t, "::notice ::percentages%0D%0A50%25 75%25 100%25", buf.String())
+		logger.Info("percentages\r\n50% 75% 100%")
+		requireEqualString(t, "::notice ::percentages%0D%0A50%25 75%25 100%25\n", buf.String())
 	})
 
 	t.Run("debug", func(t *testing.T) {
@@ -147,11 +147,6 @@ func requireEqualString(t *testing.T, want, got string) {
 want: %s
 got:  %s`, want, got)
 	}
-}
-
-func requireEqualLine(t *testing.T, want, got string) {
-	t.Helper()
-	requireEqualString(t, want+newlineStr, got)
 }
 
 func requireStringContains(t *testing.T, want, got string) {
