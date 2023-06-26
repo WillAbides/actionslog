@@ -21,8 +21,8 @@ func main() {
 
 	logger.Info("hello", slog.String("object", "world"))
 
-	logger.Warn(`This is a stern warning
-Pleas stop doing whatever you're doing'`, slog.Any("activities", []string{
+	logger.Warn(`This is a stern warning.
+Please stop doing whatever you're doing`, slog.Any("activities", []string{
 		"doing bad stuff",
 		"getting caught",
 	}))
