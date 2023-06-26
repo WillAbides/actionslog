@@ -60,6 +60,7 @@ jobs:
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
       - run: script/lint
       - run: script/generate --check
+      - run: go run ./internal/example
 
   release:
     needs:
