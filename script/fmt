@@ -7,6 +7,6 @@ CDPATH="" cd -- "$(dirname -- "$0")/.."
 
 script/bindown -q install gofumpt shfmt
 
-bin/gofumpt -w -extra -- *.go
+bin/gofumpt -w -extra .
 
 bin/shfmt -ci -i 2 -ci -sr -w -s ./script
