@@ -30,7 +30,7 @@ if [ "$1" = "--check" ]; then
   exit 0
 fi
 
-for file in actionslog.go actionslog_test.go yaml.go internal/example/example.go; do
+for file in actionslog.go actionslog_test.go yaml.go base.go wrapper.go internal/example/example.go; do
   # if file ends in _test.go, rename it to _exp_test.go
   # if it ends in .go, rename it to _exp.go
   x_file="$(
