@@ -3,8 +3,10 @@
 package actionslog
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 
 	"gopkg.in/yaml.v3"
@@ -113,4 +115,32 @@ func (m anyMarshaler) MarshalYAML() (any, error) {
 		return nil, err
 	}
 	return val, nil
+}
+
+func DefaultHandler(w io.Writer) slog.Handler {
+	handle := func(ctx context.Context, handlerAttrs []slog.Attr, record slog.Record) error {
+		_, err := io.WriteString(w, record.Message)
+		if err != nil {
+			return err
+		}
+		if len(handlerAttrs) == 0 && record.NumAttrs() == 0 {
+			return nil
+		}
+		_, err = io.WriteString(w, "\n")
+		if err != nil {
+			return err
+		}
+		attrs := handlerAttrs
+		record.Attrs(func(attr slog.Attr) bool {
+			attrs = appendAttr(attrs, attr)
+			return true
+		})
+		marshaler := attrsMarshaler{attrs: attrs}
+		enc := yaml.NewEncoder(w)
+		enc.SetIndent(2)
+		return enc.Encode(marshaler)
+	}
+	return &baseHandler{
+		HandleFunc: handle,
+	}
 }

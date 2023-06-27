@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
-	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -16,9 +15,7 @@ import (
 )
 
 func Example() {
-	logger := slog.New(actionslog.New(os.Stdout, &actionslog.Options{
-		Level: slog.LevelDebug,
-	}))
+	logger := slog.New(&actionslog.Handler{})
 	logger = logger.With(slog.String("func", "Example"))
 
 	logger.Info("hello", slog.String("object", "world"))
@@ -29,12 +26,12 @@ func Example() {
 	logger.Info("multiline value", slog.String("value", "this is a\nmultiline\nvalue"))
 	// Output:
 	//
-	// ::notice ::hello%0Afunc: Example%0Aobject: world
-	// ::warning ::This is a stern warning%0Afunc: Example
-	// ::error ::got an error%0Afunc: Example%0Aerr: omg
-	// ::debug ::this is a debug message%0Afunc: Example
-	// ::notice ::this is a %0A multiline %0A message%0Afunc: Example
-	// ::notice ::multiline value%0Afunc: Example%0Avalue: |-%0A    this is a%0A    multiline%0A    value
+	// ::notice ::hello%0Afunc: Example%0Aobject: world%0A
+	// ::warning ::This is a stern warning%0Afunc: Example%0A
+	// ::error ::got an error%0Afunc: Example%0Aerr: omg%0A
+	// ::debug ::this is a debug message%0Afunc: Example%0A
+	// ::notice ::this is a %0A multiline %0A message%0Afunc: Example%0A
+	// ::notice ::multiline value%0Afunc: Example%0Avalue: |-%0A  this is a%0A  multiline%0A  value%0A
 }
 
 func TestHandler(t *testing.T) {
@@ -53,8 +50,8 @@ func TestHandler(t *testing.T) {
 		}
 		wg.Wait()
 		for i := 0; i < 100; i++ {
-			requireStringContains(t, fmt.Sprintf("::notice ::hello%si: %d\n", "%0A", i), buf.String())
-			requireStringContains(t, fmt.Sprintf("::notice ::hello%ssub: sub%si: %d\n", "%0A", "%0A", i), buf.String())
+			requireStringContains(t, fmt.Sprintf("::notice ::hello%si: %d%s\n", "%0A", i, "%0A"), buf.String())
+			requireStringContains(t, fmt.Sprintf("::notice ::hello%ssub: sub%si: %d%s\n", "%0A", "%0A", i, "%0A"), buf.String())
 		}
 	})
 
@@ -76,7 +73,17 @@ func TestHandler(t *testing.T) {
 		logger = logger.WithGroup("group1")
 		logger = logger.With(slog.String("a", "b"))
 		logger.Info("hello")
-		requireEqualString(t, "::notice ::hello%0Agroup1:%0A    a: b\n", buf.String())
+		requireEqualString(t, "::notice ::hello%0Agroup1:%0A  a: b%0A\n", buf.String())
+	})
+
+	t.Run("WithGroup and attrs", func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(actionslog.New(&buf, nil))
+		logger = logger.WithGroup("group1")
+		logger = logger.With(slog.String("a", "b"))
+		logger = logger.With(slog.String("c", "d"))
+		logger.Info("hello", slog.String("e", "f"))
+		requireEqualString(t, "::notice ::hello%0Agroup1:%0A  a: b%0A  c: d%0A  e: f%0A\n", buf.String())
 	})
 
 	t.Run("Debug to notice", func(t *testing.T) {
@@ -177,12 +184,5 @@ func requireStringContains(t *testing.T, want, got string) {
 		t.Fatalf(`String does not contain:
 want: %s
 got:  %s`, want, got)
-	}
-}
-
-func requireNoErr(t *testing.T, err error) {
-	t.Helper()
-	if err != nil {
-		t.Fatal(err)
 	}
 }
