@@ -8,11 +8,6 @@ import (
 )
 
 type baseHandler struct {
-	// Level reports the minimum record level that will be logged.
-	// The handler discards records with lower levels.
-	// If Level is nil, the handler assumes LevelInfo.
-	// The handler calls Level.Level for each record processed;
-	// to adjust the minimum level dynamically, use a LevelVar.
 	Level slog.Leveler
 
 	// HandleFunc is what is called on Handle.

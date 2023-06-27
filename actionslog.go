@@ -49,9 +49,10 @@ type Options struct {
 
 	// Level reports the minimum record level that will be logged.
 	// The handler discards records with lower levels.
-	// This does not affect the log level of the inner slog.Handler. For best results,
+	// This does not affect the log level of the inner slog.Handler. For best results, either
 	// set the level of the inner slog.Handler to slog.LevelDebug and use this Level to adjust
-	// the minimum level.
+	// the minimum level or leave this nil and set the level of the inner slog.Handler. Do not
+	// set both or you may confuse yourself.
 	Level slog.Leveler
 
 	// Handler is a function that returns the inner slog.Handler that will be used to format the parts

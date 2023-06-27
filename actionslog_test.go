@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
-	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -16,9 +15,7 @@ import (
 )
 
 func Example() {
-	logger := slog.New(actionslog.New(os.Stdout, &actionslog.Options{
-		Level: slog.LevelDebug,
-	}))
+	logger := slog.New(&actionslog.Handler{})
 	logger = logger.With(slog.String("func", "Example"))
 
 	logger.Info("hello", slog.String("object", "world"))
