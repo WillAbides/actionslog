@@ -13,7 +13,7 @@ script/bindown runs bindown with the given arguments
 
 ### cibuild
 
-script/cibuild is run by CI to test this project. It can also be run locally.
+script/cibuild runs the same checks as GitHub Actions.
 
 ### fmt
 
@@ -21,21 +21,20 @@ script/fmt formats go code and shell scripts.
 
 ### generate
 
-script/generate runs all generators for this repo.
+script/generate generates code and docs.
 `script/generate --check` checks that the generated files are up to date.
 
 ### lint
 
-script/lint runs linters on the project.
+script/lint lints go code and shell scripts.
 
 ### test
 
-script/test runs tests on the project.
+script/test runs go tests.
 
 ### update-docs
 
 script/generate-readme updates documentation.
-- For projects with binaries, it updates the usage output in README.md.
 - Adds script descriptions to CONTRIBUTING.md.
 
 <!--- end script descriptions --->

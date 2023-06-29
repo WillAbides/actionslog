@@ -1,5 +1,5 @@
 #!/bin/sh
-#/ script/test runs tests on the project.
+#/ script/test runs go tests.
 
 set -e
 
