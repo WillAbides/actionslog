@@ -15,7 +15,7 @@ import (
 )
 
 func Example() {
-	logger := slog.New(&actionslog.Handler{})
+	logger := slog.New(&actionslog.Wrapper{})
 	logger = logger.With(slog.String("func", "Example"))
 
 	logger.Info("hello", slog.String("object", "world"))
