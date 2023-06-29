@@ -2,14 +2,20 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/willabides/actionslog.svg)](https://pkg.go.dev/github.com/willabides/actionslog)
 
+[Contributions welcome](./CONTRIBUTING.md).
+
 ```shell
 go get github.com/willabides/actionslog
 ```
 
-actionslog provides a handler for Go's [log/slog](https://pkg.go.dev/log/slog) that outputs logs in the format expected
-by GitHub Actions.
+actionslog provides a wrapper around a Handler for Go's [log/slog](https://pkg.go.dev/log/slog) that outputs logs
+as [GitHub Actions workflow commands](https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-a-debug-message)
+that will cause the logs to show up in the GitHub UI -- optionally with links to the source code.
 
-The output format is roughly `<message>\n<vars as yaml>` after GitHub is done with it. So, in your output,
+It can wrap any slog.Handler, but it also provides a default Handler that formats the logs in a way that I think is easy
+to read in the GitHub UI.
+
+The default output format is roughly `<message>\n<vars as yaml>` after GitHub is done with it. So, in your output,
 `logger.Info("hello", slog.String("object", "world"), slog.Any("list", []string{"a", "b", "c"))` would look like:
 
 ```
@@ -51,7 +57,7 @@ func main() {
 
 ## Screenshots
 
-This is what it looks like on the GitHub UI:
+This is what the output of ./internal/example looks like in the GitHub UI.
 
 ### Run Log
 

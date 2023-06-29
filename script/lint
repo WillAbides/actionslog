@@ -1,5 +1,5 @@
 #!/bin/sh
-#/ script/lint runs linters on the project.
+#/ script/lint lints go code and shell scripts.
 
 set -e
 
