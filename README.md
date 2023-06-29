@@ -2,6 +2,8 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/willabides/actionslog.svg)](https://pkg.go.dev/github.com/willabides/actionslog)
 
+[Contributions welcome](./CONTRIBUTING.md).
+
 ```shell
 go get github.com/willabides/actionslog
 ```
