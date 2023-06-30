@@ -7,19 +7,15 @@ package main
 import (
 	"fmt"
 	"golang.org/x/exp/slog"
-	"os"
 
 	"github.com/willabides/actionslog"
 )
 
 func main() {
-	logger := slog.New(actionslog.New(
-		os.Stdout,
-		&actionslog.Options{
-			AddSource: true,
-			Level:     slog.LevelDebug,
-		},
-	)).With(slog.String("foo", "bar"))
+	logger := slog.New(&actionslog.Wrapper{
+		AddSource: true,
+		Level:     slog.LevelDebug,
+	}).With(slog.String("foo", "bar"))
 
 	logger.Info("hello", slog.String("object", "world"))
 
@@ -33,6 +29,6 @@ Please stop doing whatever you're doing`, slog.Any("activities", []string{
 
 	logger.Debug("this is a debug message")
 
-	noSourceLogger := slog.New(actionslog.New(os.Stdout, nil))
+	noSourceLogger := slog.New(&actionslog.Wrapper{})
 	noSourceLogger.Info("this log line has no source")
 }
