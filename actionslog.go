@@ -7,7 +7,6 @@ import (
 	"context"
 	"io"
 	"log/slog"
-	"math"
 	"os"
 	"runtime"
 	"strconv"
@@ -78,7 +77,8 @@ type Wrapper struct {
 
 	parent *Wrapper
 
-	buf  *[]byte
+	// only the root's buf is used.
+	buf *[]byte
 
 	// handler should only be accessed by withLock().
 	handler slog.Handler
@@ -225,64 +225,4 @@ func (e *escapeWriter) Write(p []byte) (int, error) {
 		n++
 	}
 	return n, nil
-}
-
-func DefaultHandler(w io.Writer) slog.Handler {
-	return &prettyHandler{
-		w: w,
-		handler: slog.NewTextHandler(w, &slog.HandlerOptions{
-			Level: slog.Level(math.MinInt),
-			ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
-				if len(groups) > 0 {
-					return attr
-				}
-				switch attr.Key {
-				case "time", "level", "msg":
-					return slog.Attr{}
-				}
-				return attr
-			},
-		}),
-	}
-}
-
-type prettyHandler struct {
-	w        io.Writer
-	handler  slog.Handler
-	hasAttrs bool
-}
-
-func (p *prettyHandler) Enabled(context.Context, slog.Level) bool {
-	return true
-}
-
-func (p *prettyHandler) Handle(ctx context.Context, record slog.Record) error {
-	_, err := io.WriteString(p.w, record.Message)
-	if err != nil {
-		return err
-	}
-	if !p.hasAttrs && record.NumAttrs() == 0 {
-		return nil
-	}
-	_, err = io.WriteString(p.w, " ")
-	if err != nil {
-		return err
-	}
-	return p.handler.Handle(ctx, record)
-}
-
-func (p *prettyHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &prettyHandler{
-		w:        p.w,
-		handler:  p.handler.WithAttrs(attrs),
-		hasAttrs: true,
-	}
-}
-
-func (p *prettyHandler) WithGroup(name string) slog.Handler {
-	return &prettyHandler{
-		w:        p.w,
-		handler:  p.handler.WithGroup(name),
-		hasAttrs: p.hasAttrs,
-	}
 }

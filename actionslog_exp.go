@@ -5,12 +5,10 @@
 package actionslog
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"golang.org/x/exp/slog"
 	"io"
-	"math"
 	"os"
 	"runtime"
 	"strconv"
@@ -81,130 +79,129 @@ type Wrapper struct {
 
 	parent *Wrapper
 
-	writer *bufio.Writer
+	// only the root's buf is used.
+	buf *[]byte
 
 	// handler should only be accessed by withLock().
 	handler slog.Handler
 
 	// mux should only be accessed on the root Wrapper.
 	mux sync.Mutex
+
+	initOnce sync.Once
 }
 
-func (w *Wrapper) root() *Wrapper {
-	if w.parent == nil {
-		return w
-	}
-	return w.parent.root()
-}
-
-func withLock[T any](w *Wrapper, fn func(*bufio.Writer, slog.Handler) T) T {
-	root := w.root()
-	root.mux.Lock()
-	defer root.mux.Unlock()
-	if root.writer == nil {
-		out := root.Output
-		if out == nil {
-			out = os.Stdout
+func (w *Wrapper) init() {
+	w.initOnce.Do(func() {
+		if w.parent != nil {
+			w.parent.init()
+			return
 		}
-		root.writer = bufio.NewWriter(out)
-	}
-	writer := root.writer
-	if w.handler == nil {
-		if w.Handler != nil {
-			w.handler = w.Handler(&escapeWriter{w: writer})
-		} else {
-			w.handler = DefaultHandler(&escapeWriter{w: writer})
+		buf := make([]byte, 0, 1024)
+		w.buf = &buf
+		handler := w.Handler
+		if handler == nil {
+			handler = DefaultHandler
 		}
-	}
-	return fn(writer, w.handler)
+		w.handler = handler(&escapeWriter{buf: w.buf})
+	})
 }
 
 func (w *Wrapper) Enabled(ctx context.Context, level slog.Level) bool {
+	w.init()
 	if w.Level != nil {
 		if level < w.Level.Level() {
 			return false
 		}
 	}
-	return withLock(w, func(_ *bufio.Writer, h slog.Handler) bool {
-		return h.Enabled(ctx, level)
-	})
+	return w.handler.Enabled(ctx, level)
 }
 
 func (w *Wrapper) Handle(ctx context.Context, record slog.Record) error {
+	w.init()
 	levelLog := w.ActionsLogger
 	if levelLog == nil {
 		levelLog = DefaultActionsLog
 	}
 	actionsLog := levelLog(record.Level)
-	return withLock(w, func(writer *bufio.Writer, handler slog.Handler) error {
-		_, err := writer.WriteString("::" + actionsLog.String() + " ")
-		if err != nil {
-			return err
-		}
-		if w.AddSource {
-			frames := runtime.CallersFrames([]uintptr{record.PC})
-			frame, _ := frames.Next()
-			if frame.File != "" {
-				_, err = writer.WriteString("file=" + frame.File)
-				if err != nil {
-					return err
-				}
-				if frame.Line > 0 {
-					err = writer.WriteByte(',')
-					if err != nil {
-						return err
-					}
-				}
-			}
+	root := w
+	for root.parent != nil {
+		root = root.parent
+	}
+	root.mux.Lock()
+	defer root.mux.Unlock()
+	output := root.Output
+	if output == nil {
+		output = os.Stdout
+	}
+
+	*root.buf = (*root.buf)[:0]
+	*root.buf = append(*root.buf, "::"+actionsLog.String()+" "...)
+	if w.AddSource {
+		frames := runtime.CallersFrames([]uintptr{record.PC})
+		frame, _ := frames.Next()
+		if frame.File != "" {
+			*root.buf = append(*root.buf, "file="...)
+			*root.buf = append(*root.buf, frame.File...)
 			if frame.Line > 0 {
-				_, err = writer.WriteString("line=" + strconv.Itoa(frame.Line))
-				if err != nil {
-					return err
-				}
+				*root.buf = append(*root.buf, ',')
 			}
 		}
-		_, err = writer.WriteString("::")
-		if err != nil {
-			return err
+		if frame.Line > 0 {
+			*root.buf = append(*root.buf, "line="...)
+			*root.buf = strconv.AppendInt(*root.buf, int64(frame.Line), 10)
 		}
-		err = handler.Handle(ctx, record)
-		if err != nil {
-			return err
+	}
+	*root.buf = append(*root.buf, "::"...)
+	err := w.handler.Handle(ctx, record)
+	if err != nil {
+		return err
+	}
+	// remove trailing "%0A" and "%0D" from the buffer
+	for {
+		lb := len(*root.buf)
+		if lb < 3 {
+			break
 		}
-		err = writer.WriteByte('\n')
-		if err != nil {
-			return err
+		if (*root.buf)[lb-3] != '%' || (*root.buf)[lb-2] != '0' {
+			break
 		}
-		return writer.Flush()
-	})
+		if (*root.buf)[lb-1] != 'A' && (*root.buf)[lb-1] != 'D' {
+			break
+		}
+		*root.buf = (*root.buf)[:lb-3]
+	}
+	*root.buf = append(*root.buf, '\n')
+	_, err = io.WriteString(output, string(*root.buf))
+	return err
 }
 
 func (w *Wrapper) child(fn func(slog.Handler) slog.Handler) *Wrapper {
-	return withLock(w, func(_ *bufio.Writer, h slog.Handler) *Wrapper {
-		return &Wrapper{
-			parent:        w,
-			AddSource:     w.AddSource,
-			Level:         w.Level,
-			ActionsLogger: w.ActionsLogger,
-			handler:       fn(w.handler),
-		}
-	})
+	return &Wrapper{
+		parent:        w,
+		AddSource:     w.AddSource,
+		Level:         w.Level,
+		ActionsLogger: w.ActionsLogger,
+		handler:       fn(w.handler),
+	}
 }
 
 func (w *Wrapper) WithAttrs(attrs []slog.Attr) slog.Handler {
+	w.init()
 	return w.child(func(h slog.Handler) slog.Handler {
 		return h.WithAttrs(attrs)
 	})
 }
 
 func (w *Wrapper) WithGroup(name string) slog.Handler {
+	w.init()
 	return w.child(func(h slog.Handler) slog.Handler {
 		return h.WithGroup(name)
 	})
 }
 
 type escapeWriter struct {
-	w *bufio.Writer
+	buf *[]byte
 }
 
 func (e *escapeWriter) Write(p []byte) (int, error) {
@@ -212,92 +209,22 @@ func (e *escapeWriter) Write(p []byte) (int, error) {
 	for len(p) > 0 {
 		i := bytes.IndexAny(p, "\n\r%")
 		if i < 0 {
-			nn, err := e.w.Write(p)
-			n += nn
-			if err != nil {
-				return n, err
-			}
+			*e.buf = append(*e.buf, p...)
 			break
 		}
-		nn, err := e.w.Write(p[:i])
-		n += nn
-		if err != nil {
-			return n, err
-		}
+		*e.buf = append(*e.buf, p[:i]...)
 		p = p[i:]
+		n += i
 		switch p[0] {
 		case '\n':
-			_, err = e.w.WriteString("%0A")
+			*e.buf = append(*e.buf, "%0A"...)
 		case '\r':
-			_, err = e.w.WriteString("%0D")
+			*e.buf = append(*e.buf, "%0D"...)
 		case '%':
-			_, err = e.w.WriteString("%25")
-		}
-		if err != nil {
-			return n, err
+			*e.buf = append(*e.buf, "%25"...)
 		}
 		p = p[1:]
 		n++
 	}
 	return n, nil
-}
-
-func DefaultHandler(w io.Writer) slog.Handler {
-	return &prettyHandler{
-		w: w,
-		handler: slog.NewTextHandler(w, &slog.HandlerOptions{
-			Level: slog.Level(math.MinInt),
-			ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
-				if len(groups) > 0 {
-					return attr
-				}
-				switch attr.Key {
-				case "time", "level", "msg":
-					return slog.Attr{}
-				}
-				return attr
-			},
-		}),
-	}
-}
-
-type prettyHandler struct {
-	w        io.Writer
-	handler  slog.Handler
-	hasAttrs bool
-}
-
-func (p *prettyHandler) Enabled(context.Context, slog.Level) bool {
-	return true
-}
-
-func (p *prettyHandler) Handle(ctx context.Context, record slog.Record) error {
-	_, err := io.WriteString(p.w, record.Message)
-	if err != nil {
-		return err
-	}
-	if !p.hasAttrs && record.NumAttrs() == 0 {
-		return nil
-	}
-	_, err = io.WriteString(p.w, " ")
-	if err != nil {
-		return err
-	}
-	return p.handler.Handle(ctx, record)
-}
-
-func (p *prettyHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return &prettyHandler{
-		w:        p.w,
-		handler:  p.handler.WithAttrs(attrs),
-		hasAttrs: true,
-	}
-}
-
-func (p *prettyHandler) WithGroup(name string) slog.Handler {
-	return &prettyHandler{
-		w:        p.w,
-		handler:  p.handler.WithGroup(name),
-		hasAttrs: p.hasAttrs,
-	}
 }

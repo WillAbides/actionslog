@@ -25,17 +25,17 @@ func ExampleWrapper() {
 	logger.Warn("This is a stern warning")
 	logger.Error("got an error", slog.Any("err", fmt.Errorf("omg")))
 	logger.Debug("this is a debug message")
-	logger.Info("this is a \n multiline \n message")
+	logger.Info("this is a \n multiline \r\n message")
 	logger.Info("multiline value", slog.String("value", "this is a\nmultiline\nvalue"))
 
 	// Output:
 	//
-	// ::notice ::hello func=Example object=world%0A
-	// ::warning ::This is a stern warning func=Example%0A
-	// ::error ::got an error func=Example err=omg%0A
-	// ::debug ::this is a debug message func=Example%0A
-	// ::notice ::this is a %0A multiline %0A message func=Example%0A
-	// ::notice ::multiline value func=Example value="this is a\nmultiline\nvalue"%0A
+	// ::notice ::hello func=Example object=world
+	// ::warning ::This is a stern warning func=Example
+	// ::error ::got an error func=Example err=omg
+	// ::debug ::this is a debug message func=Example
+	// ::notice ::this is a %0A multiline %0D%0A message func=Example
+	// ::notice ::multiline value func=Example value="this is a\nmultiline\nvalue"
 }
 
 func ExampleWrapper_writeDebugToNotice() {
@@ -76,8 +76,8 @@ func TestWrapper(t *testing.T) {
 		}
 		wg.Wait()
 		for i := 0; i < 100; i++ {
-			requireStringContains(t, "::notice ::hello i="+strconv.Itoa(i)+"%0A\n", buf.String())
-			requireStringContains(t, "::notice ::hello sub=sub i="+strconv.Itoa(i)+"%0A\n", buf.String())
+			requireStringContains(t, "::notice ::hello i="+strconv.Itoa(i)+"\n", buf.String())
+			requireStringContains(t, "::notice ::hello sub=sub i="+strconv.Itoa(i)+"\n", buf.String())
 		}
 	})
 
@@ -100,7 +100,7 @@ func TestWrapper(t *testing.T) {
 		logger = logger.WithGroup("group1")
 		logger = logger.With(slog.String("a", "b"))
 		logger.Info("hello")
-		requireEqualString(t, "::notice ::hello group1.a=b%0A\n", buf.String())
+		requireEqualString(t, "::notice ::hello group1.a=b\n", buf.String())
 	})
 
 	t.Run("WithGroup and attrs", func(t *testing.T) {
@@ -110,7 +110,7 @@ func TestWrapper(t *testing.T) {
 		logger = logger.With(slog.String("a", "b"))
 		logger = logger.With(slog.String("c", "d"))
 		logger.Info("hello", slog.String("e", "f"))
-		requireEqualString(t, "::notice ::hello group1.a=b group1.c=d group1.e=f%0A\n", buf.String())
+		requireEqualString(t, "::notice ::hello group1.a=b group1.c=d group1.e=f\n", buf.String())
 	})
 
 	t.Run("Debug to notice", func(t *testing.T) {
