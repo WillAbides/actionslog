@@ -3,7 +3,6 @@
 package actionslog
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"io"
@@ -79,7 +78,7 @@ type Wrapper struct {
 
 	parent *Wrapper
 
-	writer *bufio.Writer
+	buf bytes.Buffer
 
 	// handler should only be accessed by withLock().
 	handler slog.Handler
@@ -95,26 +94,19 @@ func (w *Wrapper) root() *Wrapper {
 	return w.parent.root()
 }
 
-func withLock[T any](w *Wrapper, fn func(*bufio.Writer, slog.Handler) T) T {
+func withLock[T any](w *Wrapper, fn func(*bytes.Buffer, slog.Handler) T) T {
 	root := w.root()
 	root.mux.Lock()
 	defer root.mux.Unlock()
-	if root.writer == nil {
-		out := root.Output
-		if out == nil {
-			out = os.Stdout
-		}
-		root.writer = bufio.NewWriter(out)
-	}
-	writer := root.writer
+	root.buf.Reset()
 	if w.handler == nil {
-		if w.Handler != nil {
-			w.handler = w.Handler(&escapeWriter{w: writer})
-		} else {
-			w.handler = DefaultHandler(&escapeWriter{w: writer})
+		handler := w.Handler
+		if handler == nil {
+			handler = DefaultHandler
 		}
+		w.handler = handler(&escapeWriter{w: &root.buf})
 	}
-	return fn(writer, w.handler)
+	return fn(&root.buf, w.handler)
 }
 
 func (w *Wrapper) Enabled(ctx context.Context, level slog.Level) bool {
@@ -123,7 +115,7 @@ func (w *Wrapper) Enabled(ctx context.Context, level slog.Level) bool {
 			return false
 		}
 	}
-	return withLock(w, func(_ *bufio.Writer, h slog.Handler) bool {
+	return withLock(w, func(_ *bytes.Buffer, h slog.Handler) bool {
 		return h.Enabled(ctx, level)
 	})
 }
@@ -134,51 +126,86 @@ func (w *Wrapper) Handle(ctx context.Context, record slog.Record) error {
 		levelLog = DefaultActionsLog
 	}
 	actionsLog := levelLog(record.Level)
-	return withLock(w, func(writer *bufio.Writer, handler slog.Handler) error {
-		_, err := writer.WriteString("::" + actionsLog.String() + " ")
-		if err != nil {
-			return err
+	root := w.root()
+	root.mux.Lock()
+	defer root.mux.Unlock()
+	if w.handler == nil {
+		handler := w.Handler
+		if handler == nil {
+			handler = DefaultHandler
 		}
-		if w.AddSource {
-			frames := runtime.CallersFrames([]uintptr{record.PC})
-			frame, _ := frames.Next()
-			if frame.File != "" {
-				_, err = writer.WriteString("file=" + frame.File)
-				if err != nil {
-					return err
-				}
-				if frame.Line > 0 {
-					err = writer.WriteByte(',')
-					if err != nil {
-						return err
-					}
-				}
+		w.handler = handler(&escapeWriter{w: &root.buf})
+	}
+	output := w.root().Output
+	if output == nil {
+		output = os.Stdout
+	}
+	buf := &root.buf
+	buf.Reset()
+	_, err := buf.WriteString("::" + actionsLog.String() + " ")
+	if err != nil {
+		return err
+	}
+	if w.AddSource {
+		frames := runtime.CallersFrames([]uintptr{record.PC})
+		frame, _ := frames.Next()
+		if frame.File != "" {
+			_, err = buf.WriteString("file=" + frame.File)
+			if err != nil {
+				return err
 			}
 			if frame.Line > 0 {
-				_, err = writer.WriteString("line=" + strconv.Itoa(frame.Line))
+				err = buf.WriteByte(',')
 				if err != nil {
 					return err
 				}
 			}
 		}
-		_, err = writer.WriteString("::")
-		if err != nil {
-			return err
+		if frame.Line > 0 {
+			_, err = buf.WriteString("line=" + strconv.Itoa(frame.Line))
+			if err != nil {
+				return err
+			}
 		}
-		err = handler.Handle(ctx, record)
-		if err != nil {
-			return err
+	}
+	_, err = buf.WriteString("::")
+	if err != nil {
+		return err
+	}
+	err = w.handler.Handle(ctx, record)
+	if err != nil {
+		return err
+	}
+	// remove trailing "%0A" and "%0D" from the buffer
+	for {
+		b := buf.Bytes()
+		if len(b) < 3 {
+			break
 		}
-		err = writer.WriteByte('\n')
-		if err != nil {
-			return err
+		if b[len(b)-3] != '%' {
+			break
 		}
-		return writer.Flush()
-	})
+		if b[len(b)-2] != '0' {
+			break
+		}
+		if b[len(b)-1] != 'A' && b[len(b)-1] != 'D' {
+			break
+		}
+		buf.Truncate(len(b) - 3)
+	}
+	err = buf.WriteByte('\n')
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(output, buf)
+	if err != nil {
+		return err
+	}
+	return err
 }
 
 func (w *Wrapper) child(fn func(slog.Handler) slog.Handler) *Wrapper {
-	return withLock(w, func(_ *bufio.Writer, h slog.Handler) *Wrapper {
+	return withLock(w, func(_ *bytes.Buffer, h slog.Handler) *Wrapper {
 		return &Wrapper{
 			parent:        w,
 			AddSource:     w.AddSource,
@@ -202,7 +229,7 @@ func (w *Wrapper) WithGroup(name string) slog.Handler {
 }
 
 type escapeWriter struct {
-	w *bufio.Writer
+	w *bytes.Buffer
 }
 
 func (e *escapeWriter) Write(p []byte) (int, error) {
