@@ -78,158 +78,128 @@ type Wrapper struct {
 
 	parent *Wrapper
 
-	buf bytes.Buffer
+	buf  *[]byte
 
 	// handler should only be accessed by withLock().
 	handler slog.Handler
 
 	// mux should only be accessed on the root Wrapper.
 	mux sync.Mutex
+
+	initOnce sync.Once
 }
 
-func (w *Wrapper) root() *Wrapper {
-	if w.parent == nil {
-		return w
-	}
-	return w.parent.root()
-}
-
-func withLock[T any](w *Wrapper, fn func(*bytes.Buffer, slog.Handler) T) T {
-	root := w.root()
-	root.mux.Lock()
-	defer root.mux.Unlock()
-	root.buf.Reset()
-	if w.handler == nil {
+func (w *Wrapper) init() {
+	w.initOnce.Do(func() {
+		if w.parent != nil {
+			w.parent.init()
+			return
+		}
+		buf := make([]byte, 0, 1024)
+		w.buf = &buf
 		handler := w.Handler
 		if handler == nil {
 			handler = DefaultHandler
 		}
-		w.handler = handler(&escapeWriter{w: &root.buf})
-	}
-	return fn(&root.buf, w.handler)
+		w.handler = handler(&escapeWriter{buf: w.buf})
+	})
 }
 
 func (w *Wrapper) Enabled(ctx context.Context, level slog.Level) bool {
+	w.init()
 	if w.Level != nil {
 		if level < w.Level.Level() {
 			return false
 		}
 	}
-	return withLock(w, func(_ *bytes.Buffer, h slog.Handler) bool {
-		return h.Enabled(ctx, level)
-	})
+	return w.handler.Enabled(ctx, level)
 }
 
 func (w *Wrapper) Handle(ctx context.Context, record slog.Record) error {
+	w.init()
 	levelLog := w.ActionsLogger
 	if levelLog == nil {
 		levelLog = DefaultActionsLog
 	}
 	actionsLog := levelLog(record.Level)
-	root := w.root()
+	root := w
+	for root.parent != nil {
+		root = root.parent
+	}
 	root.mux.Lock()
 	defer root.mux.Unlock()
-	if w.handler == nil {
-		handler := w.Handler
-		if handler == nil {
-			handler = DefaultHandler
-		}
-		w.handler = handler(&escapeWriter{w: &root.buf})
-	}
-	output := w.root().Output
+	output := root.Output
 	if output == nil {
 		output = os.Stdout
 	}
-	buf := &root.buf
-	buf.Reset()
-	_, err := buf.WriteString("::" + actionsLog.String() + " ")
-	if err != nil {
-		return err
-	}
+
+	*root.buf = (*root.buf)[:0]
+	*root.buf = append(*root.buf, "::"+actionsLog.String()+" "...)
 	if w.AddSource {
 		frames := runtime.CallersFrames([]uintptr{record.PC})
 		frame, _ := frames.Next()
 		if frame.File != "" {
-			_, err = buf.WriteString("file=" + frame.File)
-			if err != nil {
-				return err
-			}
+			*root.buf = append(*root.buf, "file="...)
+			*root.buf = append(*root.buf, frame.File...)
 			if frame.Line > 0 {
-				err = buf.WriteByte(',')
-				if err != nil {
-					return err
-				}
+				*root.buf = append(*root.buf, ',')
 			}
 		}
 		if frame.Line > 0 {
-			_, err = buf.WriteString("line=" + strconv.Itoa(frame.Line))
-			if err != nil {
-				return err
-			}
+			*root.buf = append(*root.buf, "line="...)
+			*root.buf = strconv.AppendInt(*root.buf, int64(frame.Line), 10)
 		}
 	}
-	_, err = buf.WriteString("::")
-	if err != nil {
-		return err
-	}
-	err = w.handler.Handle(ctx, record)
+	*root.buf = append(*root.buf, "::"...)
+	err := w.handler.Handle(ctx, record)
 	if err != nil {
 		return err
 	}
 	// remove trailing "%0A" and "%0D" from the buffer
 	for {
-		b := buf.Bytes()
-		if len(b) < 3 {
+		lb := len(*root.buf)
+		if lb < 3 {
 			break
 		}
-		if b[len(b)-3] != '%' {
+		if (*root.buf)[lb-3] != '%' || (*root.buf)[lb-2] != '0' {
 			break
 		}
-		if b[len(b)-2] != '0' {
+		if (*root.buf)[lb-1] != 'A' && (*root.buf)[lb-1] != 'D' {
 			break
 		}
-		if b[len(b)-1] != 'A' && b[len(b)-1] != 'D' {
-			break
-		}
-		buf.Truncate(len(b) - 3)
+		*root.buf = (*root.buf)[:lb-3]
 	}
-	err = buf.WriteByte('\n')
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(output, buf)
-	if err != nil {
-		return err
-	}
+	*root.buf = append(*root.buf, '\n')
+	_, err = io.WriteString(output, string(*root.buf))
 	return err
 }
 
 func (w *Wrapper) child(fn func(slog.Handler) slog.Handler) *Wrapper {
-	return withLock(w, func(_ *bytes.Buffer, h slog.Handler) *Wrapper {
-		return &Wrapper{
-			parent:        w,
-			AddSource:     w.AddSource,
-			Level:         w.Level,
-			ActionsLogger: w.ActionsLogger,
-			handler:       fn(w.handler),
-		}
-	})
+	return &Wrapper{
+		parent:        w,
+		AddSource:     w.AddSource,
+		Level:         w.Level,
+		ActionsLogger: w.ActionsLogger,
+		handler:       fn(w.handler),
+	}
 }
 
 func (w *Wrapper) WithAttrs(attrs []slog.Attr) slog.Handler {
+	w.init()
 	return w.child(func(h slog.Handler) slog.Handler {
 		return h.WithAttrs(attrs)
 	})
 }
 
 func (w *Wrapper) WithGroup(name string) slog.Handler {
+	w.init()
 	return w.child(func(h slog.Handler) slog.Handler {
 		return h.WithGroup(name)
 	})
 }
 
 type escapeWriter struct {
-	w *bytes.Buffer
+	buf *[]byte
 }
 
 func (e *escapeWriter) Write(p []byte) (int, error) {
@@ -237,29 +207,19 @@ func (e *escapeWriter) Write(p []byte) (int, error) {
 	for len(p) > 0 {
 		i := bytes.IndexAny(p, "\n\r%")
 		if i < 0 {
-			nn, err := e.w.Write(p)
-			n += nn
-			if err != nil {
-				return n, err
-			}
+			*e.buf = append(*e.buf, p...)
 			break
 		}
-		nn, err := e.w.Write(p[:i])
-		n += nn
-		if err != nil {
-			return n, err
-		}
+		*e.buf = append(*e.buf, p[:i]...)
 		p = p[i:]
+		n += i
 		switch p[0] {
 		case '\n':
-			_, err = e.w.WriteString("%0A")
+			*e.buf = append(*e.buf, "%0A"...)
 		case '\r':
-			_, err = e.w.WriteString("%0D")
+			*e.buf = append(*e.buf, "%0D"...)
 		case '%':
-			_, err = e.w.WriteString("%25")
-		}
-		if err != nil {
-			return n, err
+			*e.buf = append(*e.buf, "%25"...)
 		}
 		p = p[1:]
 		n++
