@@ -8,7 +8,6 @@ import (
 	"context"
 	"golang.org/x/exp/slog"
 	"io"
-	"math"
 	"os"
 	"strings"
 
@@ -137,13 +136,6 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 		yaml:   h.yaml,
 		groups: append(h.groups, name),
 	}
-}
-
-func DefaultHandler(w io.Writer) slog.Handler {
-	return New(&Options{
-		Output: w,
-		Level:  slog.Level(math.MinInt),
-	})
 }
 
 // indentAppender is like indentWriter, but it appends to a byte slice.
