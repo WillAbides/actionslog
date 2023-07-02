@@ -7,24 +7,40 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"runtime"
 	"strconv"
 	"sync"
 )
 
-// Log is a log level in GitHub Actions.
-type Log string
+// ActionsLog is a log level in GitHub Actions.
+type ActionsLog int
+
+func (a ActionsLog) String() string {
+	switch a {
+	case LogDebug:
+		return "debug"
+	case LogNotice:
+		return "notice"
+	case LogWarn:
+		return "warning"
+	case LogError:
+		return "error"
+	default:
+		panic("invalid ActionsLog")
+	}
+}
 
 const (
-	LogDebug  Log = "debug"
-	LogNotice Log = "notice"
-	LogWarn   Log = "warning"
-	LogError  Log = "error"
+	LogDebug ActionsLog = iota
+	LogNotice
+	LogWarn
+	LogError
 )
 
-// DefaultLevelLog is the default mapping from slog.Level to Log.
-func DefaultLevelLog(level slog.Level) Log {
+// DefaultActionsLog is the default mapping from slog.Level to ActionsLog.
+func DefaultActionsLog(level slog.Level) ActionsLog {
 	switch {
 	case level < slog.LevelInfo:
 		return LogDebug
@@ -37,20 +53,17 @@ func DefaultLevelLog(level slog.Level) Log {
 	}
 }
 
-// Options is configuration for a Wrapper.
-type Options struct {
-	// LevelLog maps a slog.Level to a Log. Defaults to DefaultLevelLog. To write debug to
-	// LogNotice instead of LogDebug, use something like:
-	//    func(level slog.Level) Log {
-	//      l := actionslog.DefaultLevelLog.Log(level)
-	//      if l == actionslog.LogDebug {
-	//        return actionslog.LogNotice
-	//      }
-	//      return l
-	//    }
-	LevelLog func(slog.Level) Log
+// Wrapper is a slog.Handler that wraps another slog.Handler and formats its output for GitHub Actions.
+type Wrapper struct {
+	// Handler is a function that returns the handler the Wrapper will wrap. Handler is only called once, so changes
+	// after the Wrapper is created will not be reflected. Defaults to DefaultHandler.
+	Handler func(w io.Writer) slog.Handler
 
-	// AddSource causes the handler to compute the source code position
+	// Output is the io.Writer that the Wrapper will write to. Defaults to os.Stdout because that is what GitHub
+	// Actions expects. Output should not be changed after the Wrapper is created.
+	Output io.Writer
+
+	// AddSource causes the Wrapper to compute the source code position
 	// of the log statement so that it can be linked from the GitHub Actions UI.
 	AddSource bool
 
@@ -59,147 +72,135 @@ type Options struct {
 	// to either set it on the Wrapper or the Handler but not both.
 	Level slog.Leveler
 
-	// Handler is a function that returns the inner slog.Handler that will be used to format the parts
-	// of the log that aren't specific to GitHub Actions. Default is DefaultHandler.
-	Handler func(w io.Writer) slog.Handler
-}
+	// ActionsLogger maps a slog.Level to an ActionsLog. Defaults to DefaultActionsLog. See ExampleWrapper_writeDebugToNotice for
+	// an example of a custom ActionsLogger.
+	ActionsLogger func(level slog.Level) ActionsLog
 
-// Wrapper is a slog.Handler that wraps another slog.Handler and formats its output for GitHub Actions.
-type Wrapper struct {
-	opts   Options
-	output io.Writer
 	parent *Wrapper
+
+	// only the root's buf is used.
+	buf *[]byte
 
 	// handler should only be accessed by withLock().
 	handler slog.Handler
 
 	// mux should only be accessed on the root Wrapper.
 	mux sync.Mutex
+
+	initOnce sync.Once
 }
 
-// New returns a new Wrapper.
-func New(w io.Writer, opts *Options) slog.Handler {
-	if opts == nil {
-		opts = &Options{}
-	}
-
-	return &Wrapper{
-		opts:   *opts,
-		output: w,
-	}
-}
-
-func (w *Wrapper) clone() *Wrapper {
-	return &Wrapper{
-		opts:   w.opts,
-		parent: w,
-	}
-}
-
-func (w *Wrapper) root() *Wrapper {
-	if w.parent == nil {
-		return w
-	}
-	return w.parent.root()
-}
-
-func (w *Wrapper) withLock(fn func(w io.Writer, handler slog.Handler)) {
-	root := w.root()
-	root.mux.Lock()
-	out := root.output
-	if out == nil {
-		out = os.Stdout
-	}
-	if w.handler == nil {
-		if w.opts.Handler != nil {
-			w.handler = w.opts.Handler(&escapeWriter{w: out})
-		} else {
-			w.handler = DefaultHandler(&escapeWriter{w: out})
+func (w *Wrapper) init() {
+	w.initOnce.Do(func() {
+		if w.parent != nil {
+			w.parent.init()
+			return
 		}
-	}
-	fn(out, w.handler)
-	root.mux.Unlock()
+		buf := make([]byte, 0, 1024)
+		w.buf = &buf
+		handler := w.Handler
+		if handler == nil {
+			handler = DefaultHandler
+		}
+		w.handler = handler(&escapeWriter{buf: w.buf})
+	})
 }
 
 func (w *Wrapper) Enabled(ctx context.Context, level slog.Level) bool {
-	if w.opts.Level != nil {
-		if level < w.opts.Level.Level() {
+	w.init()
+	if w.Level != nil {
+		if level < w.Level.Level() {
 			return false
 		}
 	}
-	var handler slog.Handler
-	w.withLock(func(_ io.Writer, h slog.Handler) {
-		handler = h
-	})
-	return handler.Enabled(ctx, level)
+	return w.handler.Enabled(ctx, level)
 }
 
 func (w *Wrapper) Handle(ctx context.Context, record slog.Record) error {
-	levelLog := w.opts.LevelLog
+	w.init()
+	levelLog := w.ActionsLogger
 	if levelLog == nil {
-		levelLog = DefaultLevelLog
+		levelLog = DefaultActionsLog
 	}
 	actionsLog := levelLog(record.Level)
+	root := w
+	for root.parent != nil {
+		root = root.parent
+	}
+	root.mux.Lock()
+	defer root.mux.Unlock()
+	output := root.Output
+	if output == nil {
+		output = os.Stdout
+	}
 
-	line := "::" + string(actionsLog) + " "
-	if w.opts.AddSource {
+	*root.buf = (*root.buf)[:0]
+	*root.buf = append(*root.buf, "::"+actionsLog.String()+" "...)
+	if w.AddSource {
 		frames := runtime.CallersFrames([]uintptr{record.PC})
 		frame, _ := frames.Next()
 		if frame.File != "" {
-			line += "file=" + frame.File
+			*root.buf = append(*root.buf, "file="...)
+			*root.buf = append(*root.buf, frame.File...)
 			if frame.Line > 0 {
-				line += ","
+				*root.buf = append(*root.buf, ',')
 			}
 		}
 		if frame.Line > 0 {
-			line += "line=" + strconv.Itoa(frame.Line)
+			*root.buf = append(*root.buf, "line="...)
+			*root.buf = strconv.AppendInt(*root.buf, int64(frame.Line), 10)
 		}
 	}
-	line += "::"
-
-	var err error
-	w.withLock(func(writer io.Writer, handler slog.Handler) {
-		_, err = writer.Write([]byte(line))
-		if err != nil {
-			return
+	*root.buf = append(*root.buf, "::"...)
+	err := w.handler.Handle(ctx, record)
+	if err != nil {
+		return err
+	}
+	// remove trailing "%0A" and "%0D" from the buffer
+	for {
+		lb := len(*root.buf)
+		if lb < 3 {
+			break
 		}
-		err = handler.Handle(ctx, record)
-		if err != nil {
-			return
+		if (*root.buf)[lb-3] != '%' || (*root.buf)[lb-2] != '0' {
+			break
 		}
-		_, err = writer.Write([]byte{'\n'})
-	})
+		if (*root.buf)[lb-1] != 'A' && (*root.buf)[lb-1] != 'D' {
+			break
+		}
+		*root.buf = (*root.buf)[:lb-3]
+	}
+	*root.buf = append(*root.buf, '\n')
+	_, err = io.WriteString(output, string(*root.buf))
 	return err
 }
 
+func (w *Wrapper) child(fn func(slog.Handler) slog.Handler) *Wrapper {
+	return &Wrapper{
+		parent:        w,
+		AddSource:     w.AddSource,
+		Level:         w.Level,
+		ActionsLogger: w.ActionsLogger,
+		handler:       fn(w.handler),
+	}
+}
+
 func (w *Wrapper) WithAttrs(attrs []slog.Attr) slog.Handler {
-	var handler slog.Handler
-	w.withLock(func(_ io.Writer, h slog.Handler) {
-		handler = h
+	w.init()
+	return w.child(func(h slog.Handler) slog.Handler {
+		return h.WithAttrs(attrs)
 	})
-	h2 := w.clone()
-	h2.handler = handler.WithAttrs(attrs)
-	return h2
 }
 
 func (w *Wrapper) WithGroup(name string) slog.Handler {
-	var handler slog.Handler
-	w.withLock(func(_ io.Writer, h slog.Handler) {
-		handler = h
+	w.init()
+	return w.child(func(h slog.Handler) slog.Handler {
+		return h.WithGroup(name)
 	})
-	h2 := w.clone()
-	h2.handler = handler.WithGroup(name)
-	return h2
 }
 
-var (
-	escapedNL      = []byte("%0A")
-	escapedCR      = []byte("%0D")
-	escapedPercent = []byte("%25")
-)
-
 type escapeWriter struct {
-	w io.Writer
+	buf *[]byte
 }
 
 func (e *escapeWriter) Write(p []byte) (int, error) {
@@ -207,33 +208,40 @@ func (e *escapeWriter) Write(p []byte) (int, error) {
 	for len(p) > 0 {
 		i := bytes.IndexAny(p, "\n\r%")
 		if i < 0 {
-			nn, err := e.w.Write(p)
-			n += nn
-			if err != nil {
-				return n, err
-			}
+			*e.buf = append(*e.buf, p...)
 			break
 		}
-		nn, err := e.w.Write(p[:i])
-		n += nn
-		if err != nil {
-			return n, err
-		}
+		*e.buf = append(*e.buf, p[:i]...)
 		p = p[i:]
+		n += i
 		switch p[0] {
 		case '\n':
-			// skip trailing newline
-			_, err = e.w.Write(escapedNL)
+			*e.buf = append(*e.buf, "%0A"...)
 		case '\r':
-			_, err = e.w.Write(escapedCR)
+			*e.buf = append(*e.buf, "%0D"...)
 		case '%':
-			_, err = e.w.Write(escapedPercent)
-		}
-		if err != nil {
-			return n, err
+			*e.buf = append(*e.buf, "%25"...)
 		}
 		p = p[1:]
 		n++
 	}
 	return n, nil
+}
+
+// DefaultHandler is a slog.TextHandler with time and level output removed because that would
+// be redundant with the actions log.
+func DefaultHandler(w io.Writer) slog.Handler {
+	return slog.NewTextHandler(w, &slog.HandlerOptions{
+		Level: slog.Level(math.MinInt),
+		ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
+			if len(groups) > 0 {
+				return attr
+			}
+			switch attr.Key {
+			case "time", "level":
+				return slog.Attr{}
+			}
+			return attr
+		},
+	})
 }

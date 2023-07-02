@@ -30,7 +30,10 @@ if [ "$1" = "--check" ]; then
   exit 0
 fi
 
-for file in actionslog.go actionslog_test.go yaml.go base.go internal/example/example.go; do
+script/bindown -q install handcrafted
+handcrafted_files="$(git ls-files -o -c --exclude-standard '*.go' | bin/handcrafted)"
+
+for file in $handcrafted_files; do
   # if file ends in _test.go, rename it to _exp_test.go
   # if it ends in .go, rename it to _exp.go
   x_file="$(

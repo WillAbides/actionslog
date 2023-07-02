@@ -4,20 +4,23 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
-	"os"
 
 	"github.com/willabides/actionslog"
+	"github.com/willabides/actionslog/human"
 )
 
 func main() {
-	logger := slog.New(actionslog.New(
-		os.Stdout,
-		&actionslog.Options{
-			AddSource: true,
-			Level:     slog.LevelDebug,
+	logger := slog.New(&actionslog.Wrapper{
+		AddSource: true,
+		Handler: func(w io.Writer) slog.Handler {
+			return human.New(&human.Options{
+				Output: w,
+				Level:  slog.LevelDebug,
+			})
 		},
-	)).With(slog.String("foo", "bar"))
+	}).With(slog.String("foo", "bar"))
 
 	logger.Info("hello", slog.String("object", "world"))
 
@@ -31,6 +34,6 @@ Please stop doing whatever you're doing`, slog.Any("activities", []string{
 
 	logger.Debug("this is a debug message")
 
-	noSourceLogger := slog.New(actionslog.New(os.Stdout, nil))
+	noSourceLogger := slog.New(&actionslog.Wrapper{})
 	noSourceLogger.Info("this log line has no source")
 }
