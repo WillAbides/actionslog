@@ -13,7 +13,17 @@ as [GitHub Actions workflow commands](https://docs.github.com/en/actions/using-w
 that will cause the logs to show up in the GitHub UI -- optionally with links to the source code.
 
 It can wrap any slog.Handler, but it also provides human.Handler which is meant to be a little easier for human's to
-read.
+read. human.Handler's output is roughly `<message>\n  <vars as yaml>`, so output
+for `logger.Info("hello", slog.String("object", "world"), slog.Any("list", []string{"a", "b", "c"))` would look like:
+
+```text
+hello
+  object: world
+  list:
+    - a
+    - b
+    - c
+```
 
 actionslog.Wrapper implements [slog.Handler](https://pkg.go.dev/log/slog#Handler) from "log/slog" when built with go
 1.21 or higher. When built with go earlier versions that predate "log/slog", it
