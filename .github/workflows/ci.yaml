@@ -77,4 +77,5 @@ jobs:
           create-release: true
           validate-go-module: go.mod
           release-refs: main
+          v0: true
           initial-release-tag: v0.0.0-0
