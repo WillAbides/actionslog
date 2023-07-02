@@ -12,7 +12,8 @@ actionslog provides a wrapper around a Handler for Go's [log/slog](https://pkg.g
 as [GitHub Actions workflow commands](https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-a-debug-message)
 that will cause the logs to show up in the GitHub UI -- optionally with links to the source code.
 
-It can wrap any slog.Handler, but it also provides HumanHandler which is a little easier to read in the GitHub UI.
+It can wrap any slog.Handler, but it also provides human.Handler which is meant to be a little easier for human's to
+read.
 
 actionslog.Wrapper implements [slog.Handler](https://pkg.go.dev/log/slog#Handler) from "log/slog" when built with go
 1.21 or higher. When built with go earlier versions that predate "log/slog", it
@@ -25,14 +26,15 @@ package main
 
 import (
 	"log/slog"
-	"os"
 
 	"github.com/willabides/actionslog"
+	"github.com/willabides/actionslog/human"
 )
 
 func main() {
-	logger := slog.New(&actionslog.Wrapper{})
-
+	logger := slog.New(&actionslog.Wrapper{
+		Handler: human.WithOutput,
+	})
 	logger.Info("hello", slog.String("object", "world"))
 }
 ```

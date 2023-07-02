@@ -8,6 +8,7 @@ import (
 	"context"
 	"golang.org/x/exp/slog"
 	"io"
+	"math"
 	"os"
 	"strings"
 
@@ -47,6 +48,17 @@ func New(opts *Options) *Handler {
 	return &Handler{
 		opts: *opts,
 	}
+}
+
+// WithOutput returns a new slog.Handler with the given output writer and permissive level.
+// This is primarily for use with actionslog.Wrapper.
+func WithOutput(w io.Writer) slog.Handler {
+	return New(
+		&Options{
+			Output: w,
+			Level:  slog.Level(math.MinInt),
+		},
+	)
 }
 
 func (h *Handler) Enabled(_ context.Context, level slog.Level) bool {
