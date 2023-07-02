@@ -12,21 +12,20 @@ actionslog provides a wrapper around a Handler for Go's [log/slog](https://pkg.g
 as [GitHub Actions workflow commands](https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-a-debug-message)
 that will cause the logs to show up in the GitHub UI -- optionally with links to the source code.
 
-It can wrap any slog.Handler, but it also provides a default Handler that formats the logs in a way that I think is easy
-to read in the GitHub UI.
+It can wrap any slog.Handler, but it also provides human.Handler which is meant to be a little easier for human's to
+read. human.Handler's output is roughly `<message>\n  <vars as yaml>`, so output
+for `logger.Info("hello", slog.String("object", "world"), slog.Any("list", []string{"a", "b", "c"))` would look like:
 
-The default output format is roughly `<message>\n<vars as yaml>` after GitHub is done with it. So, in your output,
-`logger.Info("hello", slog.String("object", "world"), slog.Any("list", []string{"a", "b", "c"))` would look like:
-
-```
+```text
 hello
-object: world
-list:
-  - a
-  - b  
+  object: world
+  list:
+    - a
+    - b
+    - c
 ```
 
-actionslog.Handler implements [slog.Handler](https://pkg.go.dev/log/slog#Handler) from "log/slog" when built with go
+actionslog.Wrapper implements [slog.Handler](https://pkg.go.dev/log/slog#Handler) from "log/slog" when built with go
 1.21 or higher. When built with go earlier versions that predate "log/slog", it
 implements [slog.Handler](https://pkg.go.dev/golang.org/x/exp/slog#Handler) from "golang.org/x/exp/slog".
 
@@ -37,20 +36,15 @@ package main
 
 import (
 	"log/slog"
-	"os"
 
 	"github.com/willabides/actionslog"
+	"github.com/willabides/actionslog/human"
 )
 
 func main() {
-	logger := slog.New(actionslog.New(
-		os.Stdout,
-		&actionslog.Options{
-			AddSource: true,
-			Level:     slog.LevelDebug,
-		},
-	))
-
+	logger := slog.New(&actionslog.Wrapper{
+		Handler: human.WithOutput,
+	})
 	logger.Info("hello", slog.String("object", "world"))
 }
 ```
