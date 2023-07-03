@@ -17,6 +17,10 @@ actionslog uses a number of scripts to automate common tasks. They are found in 
 
 <!--- start script descriptions --->
 
+### benchdiff
+
+script/benchdiff runs https://github.com/WillAbides/benchdiff
+
 ### bindown
 
 script/bindown runs bindown with the given arguments

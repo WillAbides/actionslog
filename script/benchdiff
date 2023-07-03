@@ -1,0 +1,10 @@
+#!/bin/sh
+#/ script/benchdiff runs https://github.com/WillAbides/benchdiff
+
+set -e
+
+CDPATH="" cd -- "$(dirname -- "$0")/.."
+
+script/bindown -q install benchdiff
+
+bin/benchdiff "$@"

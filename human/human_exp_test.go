@@ -9,12 +9,31 @@ import (
 	"fmt"
 	"golang.org/x/exp/slog"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/require"
 	"github.com/willabides/actionslog/human"
 )
+
+type mar struct {
+	val string
+}
+
+func (m mar) MarshalYAML() ([]byte, error) {
+	return strconv.AppendQuote(nil, m.val), nil
+}
+
+func TestMar(t *testing.T) {
+	b, err := yaml.Marshal(mar{val: "foo\nbar"})
+	require.NoError(t, err)
+	fmt.Println(string(b))
+	b, err = yaml.Marshal("hello\nworld")
+	require.NoError(t, err)
+	fmt.Println(string(b))
+}
 
 func ExampleHandler() {
 	logger := slog.New(human.New(&human.Options{
@@ -49,6 +68,19 @@ func ExampleHandler() {
 	//     multiline
 	//     value
 	//
+}
+
+func TestHuman_simple(t *testing.T) {
+	var buf bytes.Buffer
+	handler := human.New(&human.Options{
+		Output: &buf,
+	})
+	logger := slog.New(handler)
+	logger.Info("hello", slog.Any("object", map[string]string{
+		"a": "a",
+		"b": "",
+	}))
+	fmt.Println(buf.String())
 }
 
 func TestHuman(t *testing.T) {
@@ -91,12 +123,12 @@ hi
         omg:
           a: 1
         g4:
-          '': empty key
-          '': ""
+          "": empty key
+          "": ""
           no value: ""
           g5:
             a: b
-            '': empty key
+            "": empty key
 `
 
 	want = strings.TrimSpace(want)
