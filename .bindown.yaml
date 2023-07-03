@@ -5,6 +5,10 @@ systems:
   - linux/amd64
   - windows/amd64
 dependencies:
+  benchdiff:
+    template: benchdiff
+    vars:
+      version: 0.9.1
   gh:
     template: origin#gh
     vars:
@@ -46,6 +50,20 @@ dependencies:
     vars:
       version: 3.6.0
 templates:
+  benchdiff:
+    homepage: https://github.com/WillAbides/benchdiff
+    url: https://github.com/WillAbides/benchdiff/releases/download/v{{.version}}/benchdiff_{{.version}}_{{.os}}_{{.arch}}{{.urlSuffix}}
+    archive_path: benchdiff{{.archivePathSuffix}}
+    bin: benchdiff
+    vars:
+      archivePathSuffix: ""
+      urlSuffix: .tar.gz
+    systems:
+      - darwin/amd64
+      - darwin/arm64
+      - linux/amd64
+    required_vars:
+      - version
   origin#gh:
     homepage: https://github.com/cli/cli
     description: GitHub’s official command line tool
@@ -365,6 +383,9 @@ templates:
 template_sources:
   origin: https://raw.githubusercontent.com/WillAbides/bindown-templates/master/bindown.yml
 url_checksums:
+  https://github.com/WillAbides/benchdiff/releases/download/v0.9.1/benchdiff_0.9.1_darwin_amd64.tar.gz: 2b321a7e707358c1dadd19b2c1ebc2e512ac6103bca4cf978906c209c070821f
+  https://github.com/WillAbides/benchdiff/releases/download/v0.9.1/benchdiff_0.9.1_darwin_arm64.tar.gz: 9eee0971d5173b8edd2849efb64375e75c068a4dde5e18344491b0f7d552b77e
+  https://github.com/WillAbides/benchdiff/releases/download/v0.9.1/benchdiff_0.9.1_linux_amd64.tar.gz: 8d09d8c058727532bdfbbdabcd5c3ef1151d541d4acc1b9795ac1022edc1137c
   https://github.com/WillAbides/handcrafted/releases/download/v0.0.0/handcrafted_0.0.0_darwin_amd64.tar.gz: df5dbf9c8b282d8209a8baddfe3410c5b3ace87bdce808fce0a0d49356c9ff4d
   https://github.com/WillAbides/handcrafted/releases/download/v0.0.0/handcrafted_0.0.0_darwin_arm64.tar.gz: c03133084f87e064f9801d4b2a9739be755fcee5875382f4da0fc10cd8306dfb
   https://github.com/WillAbides/handcrafted/releases/download/v0.0.0/handcrafted_0.0.0_linux_amd64.tar.gz: 1a7885a9854d2455dce1be3bc19f2d61a61ebdc99e2a98e4969ab1965c2a64ad

@@ -11,8 +11,7 @@ import (
 	"math"
 	"os"
 	"strings"
-
-	"gopkg.in/yaml.v3"
+	"sync"
 )
 
 // Options are options for New.
@@ -46,7 +45,8 @@ func New(opts *Options) *Handler {
 		opts = &Options{}
 	}
 	return &Handler{
-		opts: *opts,
+		opts:   *opts,
+		groups: make([]string, 0, 10),
 	}
 }
 
@@ -73,20 +73,24 @@ func (h *Handler) Handle(_ context.Context, record slog.Record) error {
 	if output == nil {
 		output = os.Stderr
 	}
-	line := append([]byte(record.Message), '\n')
-	var recAttrs []slog.Attr
+	recAttrs := borrowAttrs()
 	record.Attrs(func(attr slog.Attr) bool {
-		recAttrs = append(recAttrs, attr)
+		*recAttrs = append(*recAttrs, attr)
 		return true
 	})
-	recAttrs = resolveAttrs(recAttrs)
+	*recAttrs = resolveAttrs(*recAttrs)
+	line := borrowBytes()
+	*line = append(*line, record.Message...)
+	*line = append(*line, '\n')
 	if len(h.yaml) > 0 {
-		line = append(line, h.yaml...)
+		*line = append(*line, h.yaml...)
 	}
-	if len(recAttrs) > 0 {
-		line = appendYaml(line, h.depth, h.groups, recAttrs)
+	if len(*recAttrs) > 0 {
+		*line = appendYaml(*line, h.depth, h.groups, *recAttrs)
 	}
-	_, err := output.Write(line)
+	_, err := output.Write(*line)
+	returnBytes(line)
+	returnAttrs(recAttrs)
 	return err
 }
 
@@ -110,20 +114,20 @@ func appendYaml(
 			},
 		}
 	}
+	buf := borrowBytes()
+	defer returnBytes(buf)
+	for _, attr := range attrs {
+		*buf = appendAttrYaml(*buf, attr)
+	}
+	iaBuf := borrowBytes()
+	defer returnBytes(iaBuf)
 	ia := indentAppender{
 		prefix: prefix,
+		buf:    iaBuf,
 	}
-	enc := yaml.NewEncoder(&ia)
-	enc.SetIndent(2)
-	err := enc.Encode(attrsMarshaler{attrs: attrs})
-	if err != nil {
-		return b
-	}
-	err = enc.Close()
-	if err != nil {
-		return b
-	}
-	return append(b, ia.buf...)
+	//nolint:errcheck // impossible error
+	_, _ = ia.Write(*buf)
+	return append(b, *ia.buf...)
 }
 
 func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
@@ -152,7 +156,7 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 
 // indentAppender is like indentWriter, but it appends to a byte slice.
 type indentAppender struct {
-	buf    []byte
+	buf    *[]byte
 	prefix string
 }
 
@@ -160,23 +164,23 @@ func (x *indentAppender) Write(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	needsPrefix := len(x.buf) == 0 || x.buf[len(x.buf)-1] == '\n'
+	needsPrefix := len(*x.buf) == 0 || (*x.buf)[len(*x.buf)-1] == '\n'
 	for _, b := range p {
 		if needsPrefix {
-			x.buf = append(x.buf, x.prefix...)
+			*x.buf = append(*x.buf, x.prefix...)
 			needsPrefix = false
 		}
 		if b == '\n' {
 			needsPrefix = true
 		}
-		x.buf = append(x.buf, b)
+		*x.buf = append(*x.buf, b)
 		n++
 	}
 	return n, nil
 }
 
 func resolveAttrs(attrs []slog.Attr) []slog.Attr {
-	resolved := make([]slog.Attr, 0, len(attrs))
+	resolved := borrowAttrs()
 	for _, attr := range attrs {
 		kind := attr.Value.Kind()
 		if kind == slog.KindLogValuer || kind == slog.KindAny {
@@ -185,13 +189,47 @@ func resolveAttrs(attrs []slog.Attr) []slog.Attr {
 		}
 		// inline groups with empty keys
 		if kind == slog.KindGroup && attr.Key == "" {
-			resolved = append(resolved, resolveAttrs(attr.Value.Group())...)
+			*resolved = append(*resolved, resolveAttrs(attr.Value.Group())...)
 		}
 		// elide empty attrs
 		if attr.Equal(slog.Attr{}) {
 			continue
 		}
-		resolved = append(resolved, attr)
+		*resolved = append(*resolved, attr)
 	}
-	return resolved
+	attrs = append(attrs[:0], *resolved...)
+	returnAttrs(resolved)
+	return attrs
+}
+
+var bytesPool sync.Pool
+
+func borrowBytes() *[]byte {
+	v := bytesPool.Get()
+	if v == nil {
+		b := make([]byte, 0, 1024)
+		return &b
+	}
+	return v.(*[]byte)
+}
+
+func returnBytes(b *[]byte) {
+	*b = (*b)[:0]
+	bytesPool.Put(b)
+}
+
+var attrsPool sync.Pool
+
+func borrowAttrs() *[]slog.Attr {
+	v := attrsPool.Get()
+	if v == nil {
+		attrs := make([]slog.Attr, 0, 16)
+		return &attrs
+	}
+	return v.(*[]slog.Attr)
+}
+
+func returnAttrs(attrs *[]slog.Attr) {
+	*attrs = (*attrs)[:0]
+	attrsPool.Put(attrs)
 }

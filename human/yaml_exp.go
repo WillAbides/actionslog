@@ -5,14 +5,88 @@
 package human
 
 import (
-	"encoding/json"
+	"bytes"
 	"fmt"
 	"golang.org/x/exp/slog"
+	"strconv"
+	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
 )
 
 const rfc3339Millis = "2006-01-02T15:04:05.000Z07:00"
+
+func appendAttrYaml(dst []byte, attr slog.Attr) []byte {
+	kind := attr.Value.Kind()
+	if kind == slog.KindAny || kind == slog.KindLogValuer {
+		attr.Value = attr.Value.Resolve()
+		kind = attr.Value.Kind()
+	}
+	if kind == slog.KindAny {
+		b, err := yaml.MarshalWithOptions(
+			attrsMarshaler{attrs: []slog.Attr{attr}},
+			yaml.UseJSONMarshaler(),
+			yaml.Indent(2),
+		)
+		if err != nil {
+			b = []byte(fmt.Sprintf("!ERROR encoding: %q", err.Error()))
+		}
+		dst = append(dst, b...)
+		if len(dst) == 0 || dst[len(dst)-1] != '\n' {
+			dst = append(dst, '\n')
+		}
+		return dst
+	}
+	key := strings.TrimSpace(attr.Key)
+	if strings.ContainsAny(key, ":\t\r\n") || key == "" {
+		b, err := yaml.Marshal(key)
+		if err != nil {
+			b = []byte(strconv.Quote("!BAD KEY " + key))
+		}
+		key = strings.TrimSpace(string(b))
+	}
+	val := attr.Value
+	dst = append(dst, key...)
+	dst = append(dst, ':')
+	switch kind {
+	case slog.KindGroup:
+		dst = append(dst, "\n  "...)
+		b := borrowBytes()
+		defer returnBytes(b)
+		for _, a := range val.Group() {
+			*b = appendAttrYaml((*b)[:0], a)
+			*b = bytes.ReplaceAll(*b, []byte("\n"), []byte("\n  "))
+			dst = append(dst, *b...)
+		}
+	case slog.KindBool,
+		slog.KindFloat64,
+		slog.KindInt64,
+		slog.KindUint64,
+		slog.KindDuration:
+		dst = append(dst, ' ')
+		dst = append(dst, val.String()...)
+	case slog.KindTime:
+		dst = append(dst, ' ')
+		dst = append(dst, val.Time().Format(rfc3339Millis)...)
+	case slog.KindString:
+		dst = append(dst, ' ')
+		s := strings.TrimSpace(val.String())
+		if strings.ContainsAny(s, "\n\r\t:") || s == "" {
+			b, err := yaml.Marshal(s)
+			if err != nil {
+				b = []byte(strconv.Quote("!BAD STRING " + s))
+			}
+			b = bytes.TrimSpace(b)
+			s = string(b)
+		}
+		dst = append(dst, s...)
+	}
+	dst = bytes.TrimRight(dst, " \t\r\n")
+	if len(dst) == 0 || dst[len(dst)-1] != '\n' {
+		dst = append(dst, '\n')
+	}
+	return dst
+}
 
 type valMarshaler struct {
 	val slog.Value
@@ -39,7 +113,7 @@ func (m valMarshaler) MarshalYAML() (any, error) {
 	case slog.KindAny:
 		return anyMarshaler{any: m.val.Any()}, nil
 	default:
-		panic(fmt.Sprintf("bad kind: %s", m.val.Kind()))
+		panic("bad kind: " + m.val.Kind().String())
 	}
 }
 
@@ -52,25 +126,14 @@ func (m attrsMarshaler) MarshalYAML() (any, error) {
 	if len(attrs) == 0 {
 		return nil, nil
 	}
-	node := yaml.Node{
-		Kind: yaml.MappingNode,
-	}
+	mp := make(yaml.MapSlice, 0, len(attrs))
 	for _, attr := range attrs {
-		keyNode := yaml.Node{
-			Kind:  yaml.ScalarNode,
-			Value: attr.Key,
-		}
-		valNode := &yaml.Node{}
-		err := valNode.Encode(valMarshaler{attr.Value})
-		if err != nil {
-			valNode = &yaml.Node{
-				Kind:  yaml.ScalarNode,
-				Value: fmt.Sprintf("!ERROR encoding value: %s", err.Error()),
-			}
-		}
-		node.Content = append(node.Content, &keyNode, valNode)
+		mp = append(mp, yaml.MapItem{
+			Key:   attr.Key,
+			Value: valMarshaler{attr.Value},
+		})
 	}
-	return &node, nil
+	return mp, nil
 }
 
 type anyMarshaler struct {
@@ -78,46 +141,11 @@ type anyMarshaler struct {
 }
 
 func (m anyMarshaler) MarshalYAML() (any, error) {
-	a := m.any
-	_, ok := a.(yaml.Marshaler)
-	if ok {
-		return a, nil
+	switch v := m.any.(type) {
+	case fmt.Stringer:
+		return v.String(), nil
+	case error:
+		return v.Error(), nil
 	}
-	_, ok = a.(json.Marshaler)
-	if ok {
-		jb, err := json.Marshal(a)
-		if err != nil {
-			return nil, err
-		}
-		var val any
-		err = json.Unmarshal(jb, &val)
-		if err != nil {
-			return nil, err
-		}
-		return val, nil
-	}
-	_, ok = a.(error)
-	if ok {
-		return a.(error).Error(), nil
-	}
-	_, ok = a.(fmt.Stringer)
-	if ok {
-		return a.(fmt.Stringer).String(), nil
-	}
-	// try encoding it as yaml before falling back to json
-	node := &yaml.Node{}
-	err := node.Encode(a)
-	if err == nil {
-		return node, nil
-	}
-	jb, err := json.Marshal(a)
-	if err != nil {
-		return nil, err
-	}
-	var val any
-	err = json.Unmarshal(jb, &val)
-	if err != nil {
-		return nil, err
-	}
-	return val, nil
+	return m.any, nil
 }
