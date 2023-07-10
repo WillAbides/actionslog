@@ -14,7 +14,6 @@ func main() {
 		AddSource: true,
 		Handler: func(w io.Writer) slog.Handler {
 			return slog.NewTextHandler(w, &slog.HandlerOptions{
-				AddSource: true,
 				ReplaceAttr: func(groups []string, attr slog.Attr) slog.Attr {
 					switch attr.Key {
 					case "time", "level":
