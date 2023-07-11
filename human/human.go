@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -19,6 +21,15 @@ type Options struct {
 
 	// Level is the minimum level to log. Defaults to slog.LevelInfo.
 	Level slog.Leveler
+
+	// ExcludeTime, if true, will exclude the time from the output.
+	ExcludeTime  bool
+
+	// ExcludeLevel, if true, will exclude the level from the output.
+	ExcludeLevel bool
+
+	// AddSource, if true, will add the source file and line number to the output.
+	AddSource    bool
 }
 
 // Handler is a slog.Handler that writes human-readable log entries.
@@ -71,6 +82,21 @@ func (h *Handler) Handle(_ context.Context, record slog.Record) error {
 	if output == nil {
 		output = os.Stderr
 	}
+	frontAttrs := borrowAttrs()
+	if !h.opts.ExcludeTime && !record.Time.IsZero() {
+		*frontAttrs = append(*frontAttrs, slog.Time("time", record.Time))
+	}
+	if !h.opts.ExcludeLevel {
+		*frontAttrs = append(*frontAttrs, slog.String("level", record.Level.String()))
+	}
+	if h.opts.AddSource && record.PC != 0 {
+		frames := runtime.CallersFrames([]uintptr{record.PC})
+		frame, _ := frames.Next()
+		*frontAttrs = append(*frontAttrs, slog.String(
+			"source",
+			frame.File+":"+strconv.Itoa(frame.Line),
+		))
+	}
 	recAttrs := borrowAttrs()
 	record.Attrs(func(attr slog.Attr) bool {
 		*recAttrs = append(*recAttrs, attr)
@@ -80,6 +106,9 @@ func (h *Handler) Handle(_ context.Context, record slog.Record) error {
 	line := borrowBytes()
 	*line = append(*line, record.Message...)
 	*line = append(*line, '\n')
+	if len(*frontAttrs) > 0 {
+		*line = appendYaml(*line, h.depth, h.groups, *frontAttrs)
+	}
 	if len(h.yaml) > 0 {
 		*line = append(*line, h.yaml...)
 	}
@@ -89,6 +118,7 @@ func (h *Handler) Handle(_ context.Context, record slog.Record) error {
 	_, err := output.Write(*line)
 	returnBytes(line)
 	returnAttrs(recAttrs)
+	returnAttrs(frontAttrs)
 	return err
 }
 
