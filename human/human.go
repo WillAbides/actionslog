@@ -23,13 +23,13 @@ type Options struct {
 	Level slog.Leveler
 
 	// ExcludeTime, if true, will exclude the time from the output.
-	ExcludeTime  bool
+	ExcludeTime bool
 
 	// ExcludeLevel, if true, will exclude the level from the output.
 	ExcludeLevel bool
 
 	// AddSource, if true, will add the source file and line number to the output.
-	AddSource    bool
+	AddSource bool
 }
 
 // Handler is a slog.Handler that writes human-readable log entries.
