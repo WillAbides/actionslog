@@ -5,10 +5,8 @@ package main
 import (
 	"io"
 	"log/slog"
-	"os"
 
 	"github.com/willabides/actionslog"
-	"github.com/willabides/actionslog/human"
 )
 
 func main() {
@@ -25,17 +23,8 @@ func main() {
 				},
 			})
 		},
-	}).With(slog.String("foo", "bar"))
+	})
 
-	logger = slog.New(human.New(&human.Options{
-		Output: os.Stdout,
-	})).With(slog.String("foo", "bar"))
-
-	logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-	})).With(slog.String("foo", "bar"))
-
-	logger.Info("greetings from your human-readable slog handler", slog.Any("config", map[string]any{
-		"baz": "qux",
-
-	}))
+	logger = logger.With(slog.String("foo", "bar"))
+	logger.Info("hello", "object", "world")
 }
