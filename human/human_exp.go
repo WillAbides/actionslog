@@ -8,138 +8,60 @@ import (
 	"context"
 	"golang.org/x/exp/slog"
 	"io"
-	"math"
 	"os"
-	"strings"
+	"runtime"
+	"strconv"
 	"sync"
 )
-
-// Options are options for New.
-type Options struct {
-	// Output is the writer to write to. Defaults to os.Stderr.
-	Output io.Writer
-
-	// Level is the minimum level to log. Defaults to slog.LevelInfo.
-	Level slog.Leveler
-}
 
 // Handler is a slog.Handler that writes human-readable log entries.
 // Because it is for human consumption, changes to the format are not
 // considered breaking changes. Entries may be multi-line.
 // The current format looks like this:
 //
-//		<message>
-//	   <attributes>
+//	<message>
+//	  <attributes as yaml>
 //
 // No escaping is done on the message. Attributes are in YAML format with the top level
 // indented to make it visually distinct from the message.
 type Handler struct {
-	opts   Options
-	depth  int
-	yaml   []byte
-	groups []string
+	// Output is the writer to write to. Defaults to os.Stderr.
+	Output io.Writer
+
+	// Level is the minimum level to log. Defaults to slog.LevelInfo.
+	Level slog.Leveler
+
+	// ExcludeTime, if true, will exclude the time from the output.
+	ExcludeTime bool
+
+	// ExcludeLevel, if true, will exclude the level from the output.
+	ExcludeLevel bool
+
+	// AddSource, if true, will add the source file and line number to the output.
+	AddSource bool
+
+	depth         int
+	pendingGroups []string // groups that have been added but not yet written
+	yaml          []byte
+	rootHandler   *Handler
+
+	// Below here is only accessed on rootHandler
+	resources resourcePool
+	mu        sync.Mutex
 }
 
-func New(opts *Options) *Handler {
-	if opts == nil {
-		opts = &Options{}
+func (h *Handler) root() *Handler {
+	if h.rootHandler == nil {
+		return h
 	}
-	return &Handler{
-		opts:   *opts,
-		groups: make([]string, 0, 10),
-	}
-}
-
-// WithOutput returns a new slog.Handler with the given output writer and permissive level.
-// This is primarily for use with actionslog.Wrapper.
-func WithOutput(w io.Writer) slog.Handler {
-	return New(
-		&Options{
-			Output: w,
-			Level:  slog.Level(math.MinInt),
-		},
-	)
+	return h.rootHandler
 }
 
 func (h *Handler) Enabled(_ context.Context, level slog.Level) bool {
-	if h.opts.Level != nil {
-		return level >= h.opts.Level.Level()
+	if h.Level != nil {
+		return level >= h.Level.Level()
 	}
 	return level >= slog.LevelInfo
-}
-
-func (h *Handler) Handle(_ context.Context, record slog.Record) error {
-	output := h.opts.Output
-	if output == nil {
-		output = os.Stderr
-	}
-	recAttrs := borrowAttrs()
-	record.Attrs(func(attr slog.Attr) bool {
-		*recAttrs = append(*recAttrs, attr)
-		return true
-	})
-	*recAttrs = resolveAttrs(*recAttrs)
-	line := borrowBytes()
-	*line = append(*line, record.Message...)
-	*line = append(*line, '\n')
-	if len(h.yaml) > 0 {
-		*line = append(*line, h.yaml...)
-	}
-	if len(*recAttrs) > 0 {
-		*line = appendYaml(*line, h.depth, h.groups, *recAttrs)
-	}
-	_, err := output.Write(*line)
-	returnBytes(line)
-	returnAttrs(recAttrs)
-	return err
-}
-
-func appendYaml(
-	b []byte,
-	depth int,
-	groups []string,
-	attrs []slog.Attr,
-) []byte {
-	attrs = resolveAttrs(attrs)
-	if len(attrs) == 0 {
-		return b
-	}
-	indents := 1 + depth - len(groups)
-	prefix := strings.Repeat("  ", indents)
-	for i := len(groups) - 1; i >= 0; i-- {
-		attrs = []slog.Attr{
-			{
-				Key:   groups[i],
-				Value: slog.GroupValue(attrs...),
-			},
-		}
-	}
-	buf := borrowBytes()
-	defer returnBytes(buf)
-	for _, attr := range attrs {
-		*buf = appendAttrYaml(*buf, attr)
-	}
-	iaBuf := borrowBytes()
-	defer returnBytes(iaBuf)
-	ia := indentAppender{
-		prefix: prefix,
-		buf:    iaBuf,
-	}
-	//nolint:errcheck // impossible error
-	_, _ = ia.Write(*buf)
-	return append(b, *ia.buf...)
-}
-
-func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	attrs = resolveAttrs(attrs)
-	if len(attrs) == 0 {
-		return h
-	}
-	return &Handler{
-		opts:  h.opts,
-		depth: h.depth,
-		yaml:  appendYaml(h.yaml, h.depth, h.groups, attrs),
-	}
 }
 
 func (h *Handler) WithGroup(name string) slog.Handler {
@@ -147,40 +69,155 @@ func (h *Handler) WithGroup(name string) slog.Handler {
 		return h
 	}
 	return &Handler{
-		opts:   h.opts,
-		depth:  h.depth + 1,
-		yaml:   h.yaml,
-		groups: append(h.groups, name),
+		Output:        h.Output,
+		Level:         h.Level,
+		ExcludeTime:   h.ExcludeTime,
+		ExcludeLevel:  h.ExcludeLevel,
+		AddSource:     h.AddSource,
+		rootHandler:   h.root(),
+		depth:         h.depth + 1,
+		pendingGroups: append(h.pendingGroups, name),
+		yaml:          h.yaml,
 	}
 }
 
-// indentAppender is like indentWriter, but it appends to a byte slice.
-type indentAppender struct {
-	buf    *[]byte
-	prefix string
+func (h *Handler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	root := h.root()
+	resources := &root.resources
+	attrs = resolveAttrs(resources, attrs)
+	if len(attrs) == 0 {
+		return h
+	}
+	return &Handler{
+		Output:       h.Output,
+		Level:        h.Level,
+		ExcludeTime:  h.ExcludeTime,
+		ExcludeLevel: h.ExcludeLevel,
+		AddSource:    h.AddSource,
+		rootHandler:  root,
+		depth:        h.depth,
+		yaml:         h.appendYaml(h.yaml, attrs),
+	}
 }
 
-func (x *indentAppender) Write(p []byte) (n int, err error) {
-	if len(p) == 0 {
-		return 0, nil
+// WithOutput returns a new Handler that writes to output.
+// This is primarily meant for use with [github.com/willabides/actionslog.Wrapper]
+func (h *Handler) WithOutput(output io.Writer) slog.Handler {
+	return &Handler{
+		Output:        output,
+		Level:         h.Level,
+		ExcludeTime:   h.ExcludeTime,
+		ExcludeLevel:  h.ExcludeLevel,
+		AddSource:     h.AddSource,
+		depth:         h.depth,
+		pendingGroups: append([]string{}, h.pendingGroups...),
+		yaml:          append([]byte{}, h.yaml...),
+		rootHandler:   nil, // new Output means this is the root handler now
 	}
-	needsPrefix := len(*x.buf) == 0 || (*x.buf)[len(*x.buf)-1] == '\n'
-	for _, b := range p {
-		if needsPrefix {
-			*x.buf = append(*x.buf, x.prefix...)
-			needsPrefix = false
+}
+
+func (h *Handler) Handle(_ context.Context, record slog.Record) error {
+	root := h.root()
+	pool := &root.resources
+	entry := pool.borrowBytes()
+	*entry = append(*entry, record.Message...)
+	*entry = append(*entry, '\n')
+	if !h.ExcludeTime && !record.Time.IsZero() {
+		*entry = append(*entry, "  "+slog.TimeKey+": "...)
+		*entry = appendYAMLTime(*entry, record.Time)
+		*entry = append(*entry, '\n')
+	}
+	if !h.ExcludeLevel {
+		*entry = append(*entry, "  "+slog.LevelKey+": "+record.Level.String()+"\n"...)
+	}
+	if h.AddSource && record.PC != 0 {
+		*entry = h.appendSource(record, *entry)
+	}
+	*entry = append(*entry, h.yaml...)
+	attrs := pool.borrowAttrs()
+	record.Attrs(func(attr slog.Attr) bool {
+		*attrs = append(*attrs, attr)
+		return true
+	})
+	*attrs = resolveAttrs(pool, *attrs)
+
+	if len(*attrs) > 0 {
+		*entry = h.appendYaml(*entry, *attrs)
+	}
+	root.mu.Lock()
+	output := h.Output
+	if output == nil {
+		output = os.Stderr
+	}
+	_, err := output.Write(*entry)
+	root.mu.Unlock()
+	pool.returnBytes(entry)
+	pool.returnAttrs(attrs)
+	return err
+}
+
+func (h *Handler) appendSource(record slog.Record, dst []byte) []byte {
+	ptrs := h.resources.borrowPtrs()
+	*ptrs = append(*ptrs, record.PC)
+	frame, _ := runtime.CallersFrames(*ptrs).Next()
+	if frame.Function == "" && frame.File == "" {
+		return dst
+	}
+	dst = append(dst, "  "+slog.SourceKey+":\n"...)
+	if frame.Function != "" {
+		dst = append(dst, "    function: "...)
+		dst = append(dst, frame.Function...)
+		dst = append(dst, '\n')
+	}
+	if frame.File != "" {
+		dst = append(dst, "    file: "...)
+		dst = append(dst, frame.File...)
+		dst = append(dst, '\n')
+	}
+	if frame.Line != 0 {
+		dst = append(dst, "    line: "...)
+		dst = strconv.AppendInt(dst, int64(frame.Line), 10)
+		dst = append(dst, '\n')
+	}
+	h.resources.returnPtrs(ptrs)
+	return dst
+}
+
+func (h *Handler) appendYaml(dst []byte, attrs []slog.Attr) []byte {
+	resources := &h.root().resources
+	attrs = resolveAttrs(resources, attrs)
+	if len(attrs) == 0 {
+		return dst
+	}
+	indents := 1 + h.depth - len(h.pendingGroups)
+	for i := 0; i < len(h.pendingGroups); i++ {
+		prefix := getIndentPrefix(indents)
+		dst = append(dst, prefix+h.pendingGroups[i]+":\n"...)
+		indents++
+	}
+	prefix := getIndentPrefix(indents)
+	buf := resources.borrowBytes()
+	for _, attr := range attrs {
+		*buf = appendYamlAttr(resources, *buf, attr)
+		for _, b := range *buf {
+			if len(dst) == 0 || dst[len(dst)-1] == '\n' {
+				dst = append(dst, prefix...)
+			}
+			dst = append(dst, b)
 		}
-		if b == '\n' {
-			needsPrefix = true
-		}
-		*x.buf = append(*x.buf, b)
-		n++
+		*buf = (*buf)[:0]
 	}
-	return n, nil
+	resources.returnBytes(buf)
+	return dst
 }
 
-func resolveAttrs(attrs []slog.Attr) []slog.Attr {
-	resolved := borrowAttrs()
+// resolveAttrs resolves members of attrs.
+// Resolving entails:
+//   - Calling Resolve() on any LogValuer or Any values
+//   - Inlining groups with empty keys
+//   - Omitting zero-value Attrs
+func resolveAttrs(resources *resourcePool, attrs []slog.Attr) []slog.Attr {
+	resolved := resources.borrowAttrs()
 	for _, attr := range attrs {
 		kind := attr.Value.Kind()
 		if kind == slog.KindLogValuer || kind == slog.KindAny {
@@ -189,7 +226,7 @@ func resolveAttrs(attrs []slog.Attr) []slog.Attr {
 		}
 		// inline groups with empty keys
 		if kind == slog.KindGroup && attr.Key == "" {
-			*resolved = append(*resolved, resolveAttrs(attr.Value.Group())...)
+			*resolved = append(*resolved, resolveAttrs(resources, attr.Value.Group())...)
 		}
 		// elide empty attrs
 		if attr.Equal(slog.Attr{}) {
@@ -198,14 +235,34 @@ func resolveAttrs(attrs []slog.Attr) []slog.Attr {
 		*resolved = append(*resolved, attr)
 	}
 	attrs = append(attrs[:0], *resolved...)
-	returnAttrs(resolved)
+	resources.returnAttrs(resolved)
 	return attrs
 }
 
-var bytesPool sync.Pool
+type resourcePool struct {
+	mapPool   sync.Pool
+	bytesPool sync.Pool
+	attrsPool sync.Pool
+	ptrPool   sync.Pool
+}
 
-func borrowBytes() *[]byte {
-	v := bytesPool.Get()
+func (p *resourcePool) borrowMap() map[string]any {
+	v := p.mapPool.Get()
+	if v == nil {
+		return map[string]any{}
+	}
+	return v.(map[string]any)
+}
+
+func (p *resourcePool) returnMap(v map[string]any) {
+	for k := range v {
+		delete(v, k)
+	}
+	p.mapPool.Put(v)
+}
+
+func (p *resourcePool) borrowBytes() *[]byte {
+	v := p.bytesPool.Get()
 	if v == nil {
 		b := make([]byte, 0, 1024)
 		return &b
@@ -213,15 +270,13 @@ func borrowBytes() *[]byte {
 	return v.(*[]byte)
 }
 
-func returnBytes(b *[]byte) {
-	*b = (*b)[:0]
-	bytesPool.Put(b)
+func (p *resourcePool) returnBytes(v *[]byte) {
+	*v = (*v)[:0]
+	p.bytesPool.Put(v)
 }
 
-var attrsPool sync.Pool
-
-func borrowAttrs() *[]slog.Attr {
-	v := attrsPool.Get()
+func (p *resourcePool) borrowAttrs() *[]slog.Attr {
+	v := p.attrsPool.Get()
 	if v == nil {
 		attrs := make([]slog.Attr, 0, 16)
 		return &attrs
@@ -229,7 +284,21 @@ func borrowAttrs() *[]slog.Attr {
 	return v.(*[]slog.Attr)
 }
 
-func returnAttrs(attrs *[]slog.Attr) {
-	*attrs = (*attrs)[:0]
-	attrsPool.Put(attrs)
+func (p *resourcePool) returnAttrs(v *[]slog.Attr) {
+	*v = (*v)[:0]
+	p.attrsPool.Put(v)
+}
+
+func (p *resourcePool) borrowPtrs() *[]uintptr {
+	v := p.ptrPool.Get()
+	if v == nil {
+		ptrs := make([]uintptr, 0, 16)
+		return &ptrs
+	}
+	return v.(*[]uintptr)
+}
+
+func (p *resourcePool) returnPtrs(v *[]uintptr) {
+	*v = (*v)[:0]
+	p.ptrPool.Put(v)
 }

@@ -8,6 +8,8 @@
 go get github.com/willabides/actionslog
 ```
 
+actionslog's creation was [blogged here](https://willabides.com/posts/go-slog-handler-part-1/)
+
 actionslog provides a wrapper around a Handler for Go's [log/slog](https://pkg.go.dev/log/slog) that outputs logs
 as [GitHub Actions workflow commands](https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-a-debug-message)
 that will cause the logs to show up in the GitHub UI -- optionally with links to the source code.
