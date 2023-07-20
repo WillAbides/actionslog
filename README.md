@@ -45,7 +45,7 @@ import (
 
 func main() {
 	logger := slog.New(&actionslog.Wrapper{
-		Handler: human.WithOutput,
+		Handler: human.Handler{}.WithOutput
 	})
 	logger.Info("hello", slog.String("object", "world"))
 }
