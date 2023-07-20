@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log/slog"
 
 	"github.com/willabides/actionslog"
@@ -12,14 +11,12 @@ import (
 )
 
 func main() {
+	humanHandler := &human.Handler{
+		Level: slog.LevelDebug,
+	}
 	logger := slog.New(&actionslog.Wrapper{
 		AddSource: true,
-		Handler: func(w io.Writer) slog.Handler {
-			return human.New(&human.Options{
-				Output: w,
-				Level:  slog.LevelDebug,
-			})
-		},
+		Handler:   humanHandler.WithOutput,
 	}).With(slog.String("foo", "bar"))
 
 	logger.Info("hello", slog.String("object", "world"))

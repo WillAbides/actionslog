@@ -6,146 +6,176 @@ package human
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"golang.org/x/exp/slog"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/goccy/go-yaml"
 )
 
-const rfc3339Millis = "2006-01-02T15:04:05.000Z07:00"
+var (
+	indentPrefixes     [255]string
+	indentPrefixesOnce sync.Once
+)
 
-func appendAttrYaml(dst []byte, attr slog.Attr) []byte {
+func getIndentPrefix(indents int) string {
+	indentPrefixesOnce.Do(func() {
+		indentPrefixes[0] = ""
+		for i := 1; i < len(indentPrefixes); i++ {
+			indentPrefixes[i] = indentPrefixes[i-1] + "  "
+		}
+	})
+	if indents < len(indentPrefixes) {
+		return indentPrefixes[indents]
+	}
+	return strings.Repeat("  ", indents)
+}
+
+func appendYamlAttr(resources *resourcePool, dst []byte, attr slog.Attr) []byte {
 	kind := attr.Value.Kind()
 	if kind == slog.KindAny || kind == slog.KindLogValuer {
 		attr.Value = attr.Value.Resolve()
 		kind = attr.Value.Kind()
 	}
 	if kind == slog.KindAny {
-		b, err := yaml.MarshalWithOptions(
-			attrsMarshaler{attrs: []slog.Attr{attr}},
-			yaml.UseJSONMarshaler(),
-			yaml.Indent(2),
-		)
-		if err != nil {
-			b = []byte(fmt.Sprintf("!ERROR encoding: %q", err.Error()))
-		}
-		dst = append(dst, b...)
-		if len(dst) == 0 || dst[len(dst)-1] != '\n' {
-			dst = append(dst, '\n')
-		}
-		return dst
+		return appendYamlAnyAttr(resources, dst, attr)
 	}
-	key := strings.TrimSpace(attr.Key)
-	if strings.ContainsAny(key, ":\t\r\n") || key == "" {
-		b, err := yaml.Marshal(key)
-		if err != nil {
-			b = []byte(strconv.Quote("!BAD KEY " + key))
-		}
-		key = strings.TrimSpace(string(b))
+	dst = appendYamlKey(dst, attr.Key)
+	return appendYamlValue(resources, dst, attr.Value)
+}
+
+func appendYamlKey(dst []byte, key string) []byte {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return append(dst, `"": `...)
 	}
-	val := attr.Value
-	dst = append(dst, key...)
-	dst = append(dst, ':')
-	switch kind {
-	case slog.KindGroup:
-		dst = append(dst, "\n  "...)
-		b := borrowBytes()
-		defer returnBytes(b)
-		for _, a := range val.Group() {
-			*b = appendAttrYaml((*b)[:0], a)
-			*b = bytes.ReplaceAll(*b, []byte("\n"), []byte("\n  "))
-			dst = append(dst, *b...)
+	if strings.ContainsAny(key, ":\t\r\n") {
+		dst = strconv.AppendQuote(dst, key)
+	} else {
+		dst = append(dst, key...)
+	}
+	return append(dst, ": "...)
+}
+
+func appendYamlValString(resources *resourcePool, dst []byte, s string) []byte {
+	s = strings.TrimSpace(s)
+	if strings.ContainsAny(s, "\n\r\t:") || s == "" {
+		bufBytes := resources.borrowBytes()
+		buf := bytes.NewBuffer(*bufBytes)
+		err := yaml.NewEncoder(buf, yaml.Indent(2)).Encode(s)
+		if err != nil {
+			buf.Reset()
+			buf.WriteString(strconv.Quote("!BAD STRING " + s))
 		}
-	case slog.KindBool,
-		slog.KindFloat64,
-		slog.KindInt64,
-		slog.KindUint64,
-		slog.KindDuration:
-		dst = append(dst, ' ')
-		dst = append(dst, val.String()...)
-	case slog.KindTime:
-		dst = append(dst, ' ')
-		dst = append(dst, val.Time().Format(rfc3339Millis)...)
-	case slog.KindString:
-		dst = append(dst, ' ')
-		s := strings.TrimSpace(val.String())
-		if strings.ContainsAny(s, "\n\r\t:") || s == "" {
-			b, err := yaml.Marshal(s)
-			if err != nil {
-				b = []byte(strconv.Quote("!BAD STRING " + s))
-			}
-			b = bytes.TrimSpace(b)
-			s = string(b)
-		}
+		dst = append(dst, buf.Bytes()...)
+		*bufBytes = buf.Bytes()
+	} else {
 		dst = append(dst, s...)
 	}
-	dst = bytes.TrimRight(dst, " \t\r\n")
-	if len(dst) == 0 || dst[len(dst)-1] != '\n' {
+	if len(dst) != 0 || dst[len(dst)-1] != '\n' {
 		dst = append(dst, '\n')
 	}
 	return dst
 }
 
-type valMarshaler struct {
-	val slog.Value
-}
-
-func (m valMarshaler) MarshalYAML() (any, error) {
-	switch m.val.Kind() {
-	case slog.KindString:
-		return m.val.String(), nil
+func appendYamlValue(resources *resourcePool, dst []byte, val slog.Value) []byte {
+	switch val.Kind() {
 	case slog.KindInt64:
-		return m.val.Int64(), nil
+		dst = strconv.AppendInt(dst, val.Int64(), 10)
 	case slog.KindUint64:
-		return m.val.Uint64(), nil
-	case slog.KindFloat64:
-		return m.val.Float64(), nil
+		dst = strconv.AppendUint(dst, val.Uint64(), 10)
 	case slog.KindBool:
-		return m.val.Bool(), nil
+		dst = strconv.AppendBool(dst, val.Bool())
 	case slog.KindDuration:
-		return m.val.Duration().String(), nil
+		dst = appendDuration(dst, val.Duration())
+	case slog.KindFloat64:
+		dst = strconv.AppendFloat(dst, val.Float64(), 'f', -1, 64)
 	case slog.KindTime:
-		return m.val.Time().Format(rfc3339Millis), nil
+		dst = appendYAMLTime(dst, val.Time())
+	case slog.KindString:
+		dst = appendYamlValString(resources, dst, val.String())
 	case slog.KindGroup:
-		return attrsMarshaler{attrs: m.val.Group()}, nil
-	case slog.KindAny:
-		return anyMarshaler{any: m.val.Any()}, nil
+		// remove trailing space after ":" if any
+		if len(dst) > 1 && dst[len(dst)-1] == ' ' && dst[len(dst)-2] == ':' {
+			dst = dst[:len(dst)-1]
+		}
+		dst = append(dst, "\n  "...)
+		b := resources.borrowBytes()
+		for _, a := range val.Group() {
+			*b = appendYamlAttr(
+				resources,
+				(*b)[:0],
+				a,
+			)
+			for i := range *b {
+				dst = append(dst, (*b)[i])
+				if (*b)[i] == '\n' {
+					dst = append(dst, ' ', ' ')
+				}
+			}
+		}
+		resources.returnBytes(b)
 	default:
-		panic("bad kind: " + m.val.Kind().String())
+		dst = appendYamlValString(resources, dst, "!ERROR unknown kind: "+val.String())
 	}
-}
-
-type attrsMarshaler struct {
-	attrs []slog.Attr
-}
-
-func (m attrsMarshaler) MarshalYAML() (any, error) {
-	attrs := m.attrs
-	if len(attrs) == 0 {
-		return nil, nil
+	dst = bytes.TrimRight(dst, " \t\r\n")
+	if len(dst) != 0 || dst[len(dst)-1] != '\n' {
+		dst = append(dst, '\n')
 	}
-	mp := make(yaml.MapSlice, 0, len(attrs))
-	for _, attr := range attrs {
-		mp = append(mp, yaml.MapItem{
-			Key:   attr.Key,
-			Value: valMarshaler{attr.Value},
-		})
-	}
-	return mp, nil
+	return dst
 }
 
-type anyMarshaler struct {
-	any any
-}
-
-func (m anyMarshaler) MarshalYAML() (any, error) {
-	switch v := m.any.(type) {
-	case fmt.Stringer:
-		return v.String(), nil
+// appendYamlAnyAttr appends both key and value. We need to do it this way because we don't know
+// what the yaml formatting will be ahead of time.
+func appendYamlAnyAttr(resources *resourcePool, dst []byte, attr slog.Attr) []byte {
+	val := attr.Value.Any()
+	// use errors' error message only if it doesn't implement one of these marshalers
+	switch v := val.(type) {
+	case yaml.BytesMarshaler,
+		yaml.InterfaceMarshaler,
+		yaml.BytesMarshalerContext,
+		yaml.InterfaceMarshalerContext,
+		json.Marshaler:
 	case error:
-		return v.Error(), nil
+		dst = appendYamlKey(dst, attr.Key)
+		dst = appendYamlValString(resources, dst, v.Error())
+		dst = bytes.TrimRight(dst, " \t\r\n")
+		if len(dst) != 0 || dst[len(dst)-1] != '\n' {
+			dst = append(dst, '\n')
+		}
+		return dst
 	}
-	return m.any, nil
+
+	bufBytes := resources.borrowBytes()
+	buf := bytes.NewBuffer(*bufBytes)
+	mp := resources.borrowMap()
+	defer resources.returnMap(mp)
+	mp[attr.Key] = val
+	err := yaml.NewEncoder(buf, yaml.UseJSONMarshaler(), yaml.Indent(2)).Encode(mp)
+	if err != nil {
+		dst = appendYamlKey(dst, attr.Key)
+		return appendYamlValString(resources, dst, fmt.Sprintf("!ERROR encoding: %s", err.Error()))
+	}
+	dst = append(dst, buf.Bytes()...)
+	dst = bytes.TrimRight(dst, " \t\r\n")
+	if len(dst) != 0 || dst[len(dst)-1] != '\n' {
+		dst = append(dst, '\n')
+	}
+	return dst
+}
+
+// Adapted from log/slog.appendJSONTime in go stdlib.
+func appendYAMLTime(buf []byte, t time.Time) []byte {
+	const rfc3339Millis = "2006-01-02T15:04:05.000Z07:00"
+	if y := t.Year(); y < 0 || y >= 10000 {
+		return append(buf, "!BAD TIME tim.Time year outside of range [0,9999]"...)
+	}
+	buf = append(buf, '"')
+	buf = t.AppendFormat(buf, rfc3339Millis)
+	buf = append(buf, '"')
+	return buf
 }

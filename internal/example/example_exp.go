@@ -7,21 +7,18 @@ package main
 import (
 	"fmt"
 	"golang.org/x/exp/slog"
-	"io"
 
 	"github.com/willabides/actionslog"
 	"github.com/willabides/actionslog/human"
 )
 
 func main() {
+	humanHandler := &human.Handler{
+		Level: slog.LevelDebug,
+	}
 	logger := slog.New(&actionslog.Wrapper{
 		AddSource: true,
-		Handler: func(w io.Writer) slog.Handler {
-			return human.New(&human.Options{
-				Output: w,
-				Level:  slog.LevelDebug,
-			})
-		},
+		Handler:   humanHandler.WithOutput,
 	}).With(slog.String("foo", "bar"))
 
 	logger.Info("hello", slog.String("object", "world"))
